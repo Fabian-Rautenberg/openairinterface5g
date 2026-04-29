@@ -17,6 +17,7 @@
 #define DEVICE_NAME_DEFAULT_ENC_WRITE "/dev/xdma0_h2c_1"
 #define DEVICE_NAME_DEFAULT_DEC_READ "/dev/xdma0_c2h_0"
 #define DEVICE_NAME_DEFAULT_DEC_WRITE "/dev/xdma0_h2c_0"
+#define HEADER_SIZE (16U)
 
 /**
     \brief LDPC input parameter

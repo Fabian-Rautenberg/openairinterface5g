@@ -87,9 +87,76 @@ char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));
  *	systems.)
  */
 
+ typedef struct ors_header_s {
+  uint8_t max_schedule;
+  uint8_t mb;
+  uint8_t id;
+  uint8_t max_iter;
+  uint8_t toked_iter;
+  uint8_t term_on_no_change;
+  uint8_t term_on_pass;
+  uint8_t include_parity_op;
+  uint8_t hard_op_o;
+  uint8_t sc_idx;
+  uint8_t bg;
+  uint8_t z_set;
+  uint8_t z_j;
+  uint32_t magic_field;
+  uint32_t payload_len;
+ } ors_header_t;
+#define ORS_MAGIC (0x7E7EU)
 #define RW_MAX_SIZE 0x7ffff000
 
 int verbose = 0;
+
+void write_header_to_buffer(const ors_header_t h, void* buffer)
+{
+ uint64_t tmp[2] = {0};
+ tmp[0] =
+    (((uint64_t)h.max_schedule & 0xF)  << 38) |
+    (((uint64_t)h.mb           & 0x3F) << 32) |
+    (((uint64_t)h.id           & 0xFF) << 24) |
+    (((uint64_t)h.max_iter     & 0x3F) << 18) |
+    (((uint64_t)h.term_on_no_change & 0x1) << 17) |
+    (((uint64_t)h.term_on_pass      & 0x1) << 16) |
+    (((uint64_t)h.include_parity_op & 0x1) << 15) |
+    (((uint64_t)h.hard_op_o         & 0x1) << 14) |
+    (((uint64_t)h.sc_idx       & 0xF)  << 9)  |
+    (((uint64_t)h.bg           & 0x7)  << 6)  |
+    (((uint64_t)h.z_set        & 0x7)  << 3)  |
+    (((uint64_t)h.z_j          & 0x7));
+
+tmp[1] =
+    (((uint64_t)h.magic_field & 0xFFFF) << 48) |
+    (((uint64_t)h.payload_len & 0xFFFF) << 32);
+
+  memcpy(buffer, tmp, sizeof(tmp));
+}
+
+ors_header_t read_header_from_buffer(const void* buffer)
+{
+  const uint64_t *w0 = (const uint64_t*)buffer;
+  const uint64_t *w1 = (const uint64_t*)(buffer + sizeof(uint64_t));
+  ors_header_t ret = {};
+
+  ret.max_schedule       = (*w0 >> 38) & 0xF;
+  ret.mb                 = (*w0 >> 32) & 0x3F;
+  ret.id                 = (*w0 >> 24) & 0xFF;
+  ret.toked_iter         = (*w0 >> 18) & 0x3F;
+  ret.term_on_no_change  = (*w0 >> 17) & 0x1;
+  ret.term_on_pass       = (*w0 >> 16) & 0x1;
+  ret.include_parity_op  = (*w0 >> 15) & 0x1;
+  ret.hard_op_o          = (*w0 >> 14) & 0x1;
+  ret.sc_idx             = (*w0 >> 9)  & 0xF;
+  ret.bg                 = (*w0 >> 6)  & 0x7;
+  ret.z_set              = (*w0 >> 3)  & 0x7;
+  ret.z_j                =  *w0        & 0x7;
+
+  ret.magic_field        = (*w1 >> 48) & 0xFFFF;
+  ret.payload_len        = (*w1 >> 32) & 0xFFFF;
+
+  return ret;
+}
 
 uint64_t getopt_integer(char* optarg)
 {
@@ -423,8 +490,6 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
     kb = 6;
 
   Z_val = (unsigned int)(z_a << z_j);
-  ctrl_data =
-      (max_schedule << 30) | ((mb - kb) << 24) | (id << 19) | (max_iter << 13) | (sc_idx << 9) | (bg << 6) | (z_set) << 3 | z_j;
 
   uint32_t OutDataNUM = Z_val * kb;
   uint32_t Out_dwNumItems_p128;
@@ -437,7 +502,7 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
     else
       Out_dwNumItems_p128 = 256 * ((OutDataNUM / 256) + 1);
 
-    Out_dwNumItems = (Out_dwNumItems_p128 * CB_num) >> 3;
+    Out_dwNumItems = (Out_dwNumItems_p128 * CB_num) >> 3; //< number of byte units to read output bits
   } else {
     if ((OutDataNUM & 0x7F) == 0)
       Out_dwNumItems_p128 = OutDataNUM;
@@ -449,15 +514,8 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
       Out_dwNumItems = ((Out_dwNumItems + 31) >> 5) << 5;
 
   }
-  size = Out_dwNumItems;
-  writeval = ctrl_data;
-
-  /* calculate the virtual address to be accessed */
-  virt_addr = map_base + OFFSET_DEC_OUT;
-
-  /* swap 32-bit endianess if host is not little-endian */
-  writeval = htoll(writeval);
-  *((uint32_t*)virt_addr) = writeval;
+  //payload bits + header
+  size = Out_dwNumItems + HEADER_SIZE;
 
   if (fd_dec_read < 0) {
     fprintf(stderr, "unable to open device %s, %d.\n", dev_dec_read, fd_dec_read);
@@ -465,8 +523,11 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
     return -EINVAL;
   }
 
-  /* lseek & read data from AXI MM into buffer using SGDMA */
+  /* read data from AXI ST into buffer using SGDMA */
   rc = read_to_buffer(dev_dec_read, fd_dec_read, DecOut, size, 0);
+
+  const ors_header_t header = read_header_from_buffer(DecOut);
+
   if (rc < 0)
     goto out;
 
@@ -490,7 +551,6 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   uint32_t Z_val;
   uint16_t max_schedule, mb, id, bg, z_j, kb, z_a, max_iter, sc_idx;
   uint16_t z_set;
-  uint32_t ctrl_data;
   uint32_t CB_num = Confparam.CB_num; // CB_PROCESS_NUMBER_Dec;//
 
   // this values should be given by Shane
@@ -501,8 +561,8 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   z_set = Confparam.z_set - 1;
   z_j = Confparam.z_j;
 
-  max_iter = 8;
-  sc_idx = 12;
+  max_iter = 63;
+  sc_idx = 11;
 
   if (z_set == 0)
     z_a = 2;
@@ -533,32 +593,47 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     kb = 6;
 
   Z_val = (unsigned int)(z_a << z_j);
-  ctrl_data =
-      (max_schedule << 30) | ((mb - kb) << 24) | (id << 19) | (max_iter << 13) | (sc_idx << 9) | (bg << 6) | (z_set) << 3 | z_j;
+  //ctrl_data =
+  //    (max_schedule << 30) | ((mb - kb) << 24) | (id << 19) | (max_iter << 13) | (sc_idx << 9) | (bg << 6) | (z_set) << 3 | z_j;
 
   uint32_t InDataNUM = Z_val * mb;
   uint32_t In_dwNumItems_p128;
   uint32_t In_dwNumItems;
 
-  InDataNUM = Z_val * mb * 8;
+  InDataNUM = Z_val * mb * 8; 
+  //ensure input is a multiple of 128 bit or 16 byte
   if ((InDataNUM & 0x7F) == 0)
     In_dwNumItems_p128 = InDataNUM;
   else
     In_dwNumItems_p128 = 128 * ((InDataNUM / 128) + 1);
 
+  //calculate number to transfered bytes. This will ensure input is a multiple of 32 byte.
   In_dwNumItems = (In_dwNumItems_p128 * CB_num) >> 3;
   if ((In_dwNumItems & 0x1f) != 0)
     In_dwNumItems = ((In_dwNumItems + 31) >> 5) << 5;
 
   size = In_dwNumItems;
-  writeval = ctrl_data;
+  const uint32_t numb_of_16B_units = (size + 15) / 16;
 
-  /* calculate the virtual address to be accessed */
-  virt_addr = map_base + OFFSET_DEC_IN;
-
-  /* swap 32-bit endianess if host is not little-endian */
-  writeval = htoll(writeval);
-  *((uint32_t*)virt_addr) = writeval;
+  ors_header_t header = {
+    .max_schedule = max_schedule,
+    .mb = mb - kb, //< mb stores the total number of columns of the BG, kb stores just the number of msg columns    
+    .id = id,
+    .max_iter = max_iter,
+    .term_on_no_change = 0,
+    .term_on_pass = 0,
+    .term_on_no_change = 0,
+    .include_parity_op = 0,
+    .hard_op_o = 1,
+    .sc_idx = sc_idx,
+    .bg = bg,
+    .z_set = z_set,
+    .z_j = z_j,
+    .magic_field = ORS_MAGIC,
+    .payload_len = numb_of_16B_units //< payload size in 16 Byte units
+  };
+  //insert header infront of data
+  write_header_to_buffer(header, data);
 
   if (fd_dec_write < 0) {
     fprintf(stderr, "unable to open device %s, %d.\n", dev_dec_write, fd_dec_write);
@@ -566,6 +641,8 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     return -EINVAL;
   }
 
+  //add header to input data size
+  size += HEADER_SIZE;
   rc = write_from_buffer(dev_dec_write, fd_dec_write, data, size, 0);
   if (rc < 0)
     goto out;
@@ -582,26 +659,26 @@ void test_dma_init(devices_t devices)
   /* access width */
   char* device2 = devices.user_device;
 
-  AssertFatal((fd = open(device2, O_RDWR | O_SYNC)) != -1, "CHARACTER DEVICE %s OPEN FAILURE\n", device2);
+  //AssertFatal((fd = open(device2, O_RDWR | O_SYNC)) != -1, "CHARACTER DEVICE %s OPEN FAILURE\n", device2);
   fflush(stdout);
 
   /* map one page */
-  map_base = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  AssertFatal(map_base != (void*)-1, "MEMORY MAP AT ADDRESS %p FAILED\n", map_base);
+  //map_base = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  //AssertFatal(map_base != (void*)-1, "MEMORY MAP AT ADDRESS %p FAILED\n", map_base);
 
-  void* virt_addr;
-  virt_addr = map_base + OFFSET_RESET;
-  *((uint32_t*)virt_addr) = 1;
+  //void* virt_addr;
+  //virt_addr = map_base + OFFSET_RESET;
+  //*((uint32_t*)virt_addr) = 1;
 
-  dev_enc_write = devices.enc_write_device;
-  dev_enc_read = devices.enc_read_device;
+  //dev_enc_write = devices.enc_write_device;
+  //dev_enc_read = devices.enc_read_device;
   dev_dec_write = devices.dec_write_device;
   dev_dec_read = devices.dec_read_device;
 
-  fd_enc_write = open(dev_enc_write, O_RDWR);
-  fd_enc_read = open(dev_enc_read, O_RDWR);
-  fd_dec_write = open(dev_dec_write, O_RDWR);
-  fd_dec_read = open(dev_dec_read, O_RDWR);
+  //fd_enc_write = open(dev_enc_write, O_RDWR);
+  //fd_enc_read = open(dev_enc_read, O_RDWR);
+  fd_dec_write = open(dev_dec_write, O_WRONLY);
+  fd_dec_read = open(dev_dec_read, O_RDONLY);
 
   fflush(stdout);
 
@@ -697,7 +774,7 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
     test_dma_init(devices);
     init_flag = 1;
   } else {
-    dma_reset(devices);
+    //dma_reset(devices);
   }
 
   clock_gettime(CLOCK_MONOTONIC, &ts_start0); // time start0
@@ -741,6 +818,7 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
 
   // calc CB_num and mb
   Confparam.CB_num = CB_num;
+  //This calculate the number of columns -> number of codewords
   if (baseGraph == 1)
     Confparam.mb = 22 + nRows;
   else
