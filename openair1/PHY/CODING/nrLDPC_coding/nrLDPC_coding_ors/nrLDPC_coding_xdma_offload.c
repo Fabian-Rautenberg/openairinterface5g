@@ -531,7 +531,7 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
   if (rc < 0)
     goto out;
 
-  rc = 0;
+  rc = header.toked_iter;
 
 out:
 
@@ -541,6 +541,7 @@ out:
 // int test_dma_dec_write(unsigned int *data, DecIPConf Confparam)
 int test_dma_dec_write(char* data, DecIPConf Confparam)
 {
+  static uint16_t id_c = 0;
   ssize_t rc;
 
   void* virt_addr;
@@ -556,13 +557,13 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   // this values should be given by Shane
   max_schedule = 0;
   mb = Confparam.mb;
-  id = CB_num;
+  id = id_c++;
   bg = Confparam.BGSel - 1;
   z_set = Confparam.z_set - 1;
   z_j = Confparam.z_j;
-
-  max_iter = 63;
-  sc_idx = 11;
+  
+  max_iter = Confparam.max_iter;
+  sc_idx = Confparam.SetIdx;
 
   if (z_set == 0)
     z_a = 2;
@@ -620,9 +621,8 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     .mb = mb - kb, //< mb stores the total number of columns of the BG, kb stores just the number of msg columns    
     .id = id,
     .max_iter = max_iter,
-    .term_on_no_change = 0,
-    .term_on_pass = 0,
-    .term_on_no_change = 0,
+    .term_on_no_change = 1,
+    .term_on_pass = 1,
     .include_parity_op = 0,
     .hard_op_o = 1,
     .sc_idx = sc_idx,
@@ -654,34 +654,51 @@ out:
   return rc;
 }
 
-void test_dma_init(devices_t devices)
+int32_t test_dma_init(devices_t devices)
 {
-  /* access width */
-  char* device2 = devices.user_device;
+  int32_t ret = 0;
+  /* ignore for now */
+  (void)devices.user_device;
+  //device files already opened
+  if(fd_dec_write > 0 && fd_dec_read > 0)
+  {
+    return ret;
+  }
 
-  //AssertFatal((fd = open(device2, O_RDWR | O_SYNC)) != -1, "CHARACTER DEVICE %s OPEN FAILURE\n", device2);
-  fflush(stdout);
-
-  /* map one page */
-  //map_base = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  //AssertFatal(map_base != (void*)-1, "MEMORY MAP AT ADDRESS %p FAILED\n", map_base);
-
-  //void* virt_addr;
-  //virt_addr = map_base + OFFSET_RESET;
-  //*((uint32_t*)virt_addr) = 1;
-
-  //dev_enc_write = devices.enc_write_device;
-  //dev_enc_read = devices.enc_read_device;
   dev_dec_write = devices.dec_write_device;
   dev_dec_read = devices.dec_read_device;
 
-  //fd_enc_write = open(dev_enc_write, O_RDWR);
-  //fd_enc_read = open(dev_enc_read, O_RDWR);
   fd_dec_write = open(dev_dec_write, O_WRONLY);
+  if(fd_dec_write < 0)
+  {
+    ret = fd_dec_write;
+    printf("Failed to open %s!", dev_dec_write);
+    goto test_dma_out;
+  }
   fd_dec_read = open(dev_dec_read, O_RDONLY);
+  if(fd_dec_read < 0)
+  {
+    ret = fd_dec_read;
+    printf("Failed to open %s!", dev_dec_read);
+    close(fd_dec_write);
+    goto test_dma_out;
+  }
 
   fflush(stdout);
+  test_dma_out:
+  return ret;
 
+}
+
+void dma_close()
+{
+  if(fd_dec_write > 0)
+    close(fd_dec_write);
+  if(fd_dec_read > 0)
+    close(fd_dec_read);
+  
+  fd_dec_write = 0;
+  fd_dec_read = 0;
 }
 
 void dma_reset(devices_t devices)
@@ -751,7 +768,7 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   int baseGraph;
   int CB_num;
 
-  DecIPConf Confparam;
+  DecIPConf Confparam = {.max_iter = dec_conf.max_iter, .SetIdx = dec_conf.SetIdx};
   int z_a, z_tmp;
   int z_j = 0;
 
@@ -768,15 +785,7 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
     .dec_read_device = dec_conf.dec_read_device
   };
 
-  static int init_flag = 0;
-  if (init_flag == 0) {
-    /*Init*/
-    test_dma_init(devices);
-    init_flag = 1;
-  } else {
-    //dma_reset(devices);
-  }
-
+  
   clock_gettime(CLOCK_MONOTONIC, &ts_start0); // time start0
   // LDPC input parameter
   Zc = dec_conf.Zc; // shifting size
@@ -851,11 +860,12 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   }
 
   // read output of accelerator
-  if (test_dma_dec_read((char *)buf_out, Confparam) != 0) {
+  const int numb_of_iter_or_err = test_dma_dec_read((char *)buf_out, Confparam);
+  if (numb_of_iter_or_err < 0) {
     exit(1);
     printf("read exit!!\n");
   }
 
-  return 0;
+  return numb_of_iter_or_err;
 }
 

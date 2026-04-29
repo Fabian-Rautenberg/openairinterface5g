@@ -21,7 +21,9 @@ int8_t quantize(double D, double x, uint8_t B) {
   double qxd;
   int16_t maxlev;
   qxd = floor(x / D);
-  maxlev = 1 << (B - 1); //(char)(pow(2,B-1));
+  //maxlev = 1 << (B - 1); //(char)(pow(2,B-1));
+  //FIXME: Remove this code, use previous maxlev 
+  maxlev = 120; 
 
   if (qxd <= -maxlev)
     qxd = -maxlev;

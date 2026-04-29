@@ -109,9 +109,10 @@ int test_dma_enc_read(char *EncOut, EncIPConf Confparam);
 int test_dma_enc_write(char *data, EncIPConf Confparam);
 int test_dma_dec_read(char *DecOut, DecIPConf Confparam);
 int test_dma_dec_write(char *data, DecIPConf Confparam);
-void test_dma_init(devices_t devices);
+int32_t test_dma_init(devices_t devices);
 void test_dma_shutdown();
 void dma_reset(devices_t devices);
+void dma_close();
 
 #ifdef __cplusplus
 }
