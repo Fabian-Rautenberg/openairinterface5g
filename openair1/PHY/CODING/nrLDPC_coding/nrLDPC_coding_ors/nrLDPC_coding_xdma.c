@@ -35,6 +35,8 @@
 
 #include "PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h"
 
+#include "xdma_diag.h"
+
 // Global var to limit the rework of the dirty legacy code
 int num_threads_prepare_max = 0;
 char *user_device = NULL;
@@ -75,15 +77,25 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args);
 int32_t LDPCinit(void);
 int32_t LDPCshutdown(void);
 int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_out, t_nrLDPC_time_stats *time_stats, decode_abort_t *ab);
-
+static uint8_t reverse_8bit(uint8_t byte);
 int32_t LDPCinit(void)
 {
-  return nrLDPC_coding_init();
+  devices_t dev = {.dec_read_device = DEVICE_NAME_DEFAULT_DEC_READ,
+                   .dec_write_device = DEVICE_NAME_DEFAULT_DEC_WRITE,
+                  .user_device = DEVICE_NAME_DEFAULT_USER};
+  int32_t ret = test_dma_init(dev);
+  if(ret < 0)
+  {
+    printf("Unable to use Dec HW ACC!\n");
+    exit(1);
+  }
+  return ret;
 }
 
 int32_t LDPCshutdown(void)
 {
-  return nrLDPC_coding_shutdown();
+  dma_close();
+  return 0;
 }
 
 // decoder interface
@@ -107,7 +119,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   // filler bits length
   dec_conf.numFillerBits = 0;
   dec_conf.max_schedule = 0;
-  dec_conf.SetIdx = 12;
+  dec_conf.SetIdx = 11;
   //number of message words/number of rows in BG
   dec_conf.nRows = (dec_conf.BG == 1) ? 46 : 42;
 
@@ -124,9 +136,11 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
 
   const int N = p_decParams->BG == 2 ? 52 * p_decParams->Z : 68 * p_decParams->Z;
   //copy all LLRs in internal buffer starting at HEADER_SIZE
+  time_stats->llrRes2llrOut;
+  start_meas(&time_stats->total);
   memcpy(&buffer_in[HEADER_SIZE], p_llr, N);
   start_meas(&time_stats->llr2bit);
-  int32_t ret = nrLDPC_decoder_FPGA_PYM(&buffer_in[0], &buffer_out[0], dec_conf);
+  int32_t niter = nrLDPC_decoder_FPGA_PYM(&buffer_in[0], &buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);
   
   const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
@@ -135,12 +149,26 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   {
     cK = (cK + 7) / 8; //ceil up
   }
-  //output are bits
-  memcpy(&p_out[0], &buffer_out[HEADER_SIZE], cK / 8);
+  start_meas(&time_stats->llrRes2llrOut);
+  //copy into out buffer and reverse bits
+  for(int i = 0; i < cK; ++i)
+  {
+    p_out[i] = (int8_t)reverse_8bit((uint8_t)buffer_out[HEADER_SIZE + i]);
+  }
+  stop_meas(&time_stats->llrRes2llrOut);
+  stop_meas(&time_stats->total);
 
-  return ret;
-  
+  return niter;
 } 
+
+static uint8_t reverse_8bit(uint8_t byte)
+{
+  byte = ((byte & 0xF0U) >> 4) | ((byte & 0x0FU) << 4);
+  byte = ((byte & 0xCCU) >> 2) | ((byte & 0x33U) << 2);
+  byte = ((byte & 0xAAU) >> 1) | ((byte & 0x55U) << 1);
+  return byte;
+}
+
 
 
 
@@ -154,11 +182,8 @@ int32_t nrLDPC_coding_init(void)
       {"enc_write_device", NULL, 0, .strptr = &enc_write_device, .defstrval = DEVICE_NAME_DEFAULT_ENC_WRITE, TYPE_STRING, 0, NULL},
       {"dec_read_device", NULL, 0, .strptr = &dec_read_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_READ, TYPE_STRING, 0, NULL},
       {"dec_write_device", NULL, 0, .strptr = &dec_write_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_WRITE, TYPE_STRING, 0, NULL}};
-  //config_get(config_get_if(), LoaderParams, sizeofArray(LoaderParams), "nrLDPC_coding_xdma");
-  user_device = DEVICE_NAME_DEFAULT_USER;
-  dec_read_device = DEVICE_NAME_DEFAULT_DEC_READ;
-  dec_write_device = DEVICE_NAME_DEFAULT_DEC_WRITE;
-  //AssertFatal(num_threads_prepare_max != 0, "nrLDPC_coding_xdma.num_threads_prepare was not provided");
+  config_get(config_get_if(), LoaderParams, sizeofArray(LoaderParams), "nrLDPC_coding_xdma");
+  AssertFatal(num_threads_prepare_max != 0, "nrLDPC_coding_xdma.num_threads_prepare was not provided");
 
   return 0;
 }
