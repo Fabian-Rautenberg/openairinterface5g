@@ -13,20 +13,22 @@
 #include <nr_rate_matching.h>
 #include "PHY/CODING/coding_defs.h"
 #include "PHY/CODING/coding_extern.h"
-#include "PHY/CODING/nrLDPC_coding/nrLDPC_coding_xdma/nrLDPC_coding_xdma_offload.h"
+#include "PHY/CODING/nrLDPC_coding/nrLDPC_coding_ors/nrLDPC_coding_xdma_offload.h"
 #include "PHY/CODING/nrLDPC_extern.h"
 #include "common/utils/LOG/log.h"
 #include "defs.h"
 // #define DEBUG_ULSCH_DECODING
 // #define gNB_DEBUG_TRACE
 
-#define OAI_UL_LDPC_MAX_NUM_LLR 27000 // 26112 // NR_LDPC_NCOL_BG1*NR_LDPC_ZMAX = 68*384
+#define OAI_UL_LDPC_MAX_NUM_LLR (27000U) // 26112 // NR_LDPC_NCOL_BG1*NR_LDPC_ZMAX = 68*384
+#define MAX_CB_SIZE_IN_BYTE_UNITS (1100U) // 8488/8 -> 1056 
 // #define DEBUG_CRC
 #ifdef DEBUG_CRC
 #define PRINT_CRC_CHECK(a) a
 #else
 #define PRINT_CRC_CHECK(a)
 #endif
+
 
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_interface.h"
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_nr_interface.h"
@@ -67,6 +69,82 @@ int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, in
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool);
 void nr_ulsch_FPGA_decoding_prepare_blocks(void *args);
 
+/**
+ * To support segment decoding as well, the following function has to be implemented.
+ */
+int32_t LDPCinit(void);
+int32_t LDPCshutdown(void);
+int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_out, t_nrLDPC_time_stats *time_stats, decode_abort_t *ab);
+
+int32_t LDPCinit(void)
+{
+  return nrLDPC_coding_init();
+}
+
+int32_t LDPCshutdown(void)
+{
+  return nrLDPC_coding_shutdown();
+}
+
+// decoder interface
+/**
+   \brief LDPC decoder API type definition
+   \param p_decParams LDPC decoder parameters
+   \param p_llr Input LLRs
+   \param p_llrOut Output vector
+   \param time_stats time statistics
+   \param ab structure shared between tasks to stop all the tasks if one fails
+*/
+int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_out, t_nrLDPC_time_stats *time_stats, decode_abort_t *ab)
+{
+  DecIFConf dec_conf = {0};
+  dec_conf.Zc = p_decParams->Z;
+  dec_conf.BG = p_decParams->BG;
+  dec_conf.max_iter = p_decParams->numMaxIter;
+  dec_conf.numCB = 1; 
+  // input soft bits length; not sure if calculation is correct
+  dec_conf.numChannelLls = (p_decParams->Kprime - 2 * p_decParams->Z);
+  // filler bits length
+  dec_conf.numFillerBits = 0;
+  dec_conf.max_schedule = 0;
+  dec_conf.SetIdx = 12;
+  //number of message words/number of rows in BG
+  dec_conf.nRows = (dec_conf.BG == 1) ? 46 : 42;
+
+  dec_conf.user_device = user_device;
+  dec_conf.enc_read_device = enc_read_device;
+  dec_conf.enc_write_device = enc_write_device;
+  dec_conf.dec_read_device = dec_read_device;
+  dec_conf.dec_write_device = dec_write_device;
+  
+  #define MAX_IN_DEC_ARRAY_SIZE (OAI_UL_LDPC_MAX_NUM_LLR + HEADER_SIZE)
+  #define MAX_OUT_DEC_ARRAY_SIZE (MAX_CB_SIZE_IN_BYTE_UNITS + HEADER_SIZE)
+  static int8_t buffer_in[MAX_IN_DEC_ARRAY_SIZE];
+  static int8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
+
+  const int N = p_decParams->BG == 2 ? 52 * p_decParams->Z : 68 * p_decParams->Z;
+  //copy all LLRs in internal buffer starting at HEADER_SIZE
+  memcpy(&buffer_in[HEADER_SIZE], p_llr, N);
+  start_meas(&time_stats->llr2bit);
+  int32_t ret = nrLDPC_decoder_FPGA_PYM(&buffer_in[0], &buffer_out[0], dec_conf);
+  stop_meas(&time_stats->llr2bit);
+  
+  const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
+  int cK = K; 
+  if((cK % 8) != 0)
+  {
+    cK = (cK + 7) / 8; //ceil up
+  }
+  //output are bits
+  memcpy(&p_out[0], &buffer_out[HEADER_SIZE], cK / 8);
+
+  return ret;
+  
+} 
+
+
+
+
 int32_t nrLDPC_coding_init(void)
 {
   paramdef_t LoaderParams[] = {
@@ -76,8 +154,11 @@ int32_t nrLDPC_coding_init(void)
       {"enc_write_device", NULL, 0, .strptr = &enc_write_device, .defstrval = DEVICE_NAME_DEFAULT_ENC_WRITE, TYPE_STRING, 0, NULL},
       {"dec_read_device", NULL, 0, .strptr = &dec_read_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_READ, TYPE_STRING, 0, NULL},
       {"dec_write_device", NULL, 0, .strptr = &dec_write_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_WRITE, TYPE_STRING, 0, NULL}};
-  config_get(config_get_if(), LoaderParams, sizeofArray(LoaderParams), "nrLDPC_coding_xdma");
-  AssertFatal(num_threads_prepare_max != 0, "nrLDPC_coding_xdma.num_threads_prepare was not provided");
+  //config_get(config_get_if(), LoaderParams, sizeofArray(LoaderParams), "nrLDPC_coding_xdma");
+  user_device = DEVICE_NAME_DEFAULT_USER;
+  dec_read_device = DEVICE_NAME_DEFAULT_DEC_READ;
+  dec_write_device = DEVICE_NAME_DEFAULT_DEC_WRITE;
+  //AssertFatal(num_threads_prepare_max != 0, "nrLDPC_coding_xdma.num_threads_prepare was not provided");
 
   return 0;
 }
@@ -105,14 +186,17 @@ int32_t nrLDPC_coding_encoder(void)
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool)
 {
   const uint32_t K = TB_params->K;
+  //numb of columns in the BG (52 for BG2 and 68 for BG1) -> number of coded words
   const int Kc = TB_params->BG == 2 ? 52 : 68;
   int r_offset = 0, offset = 0;
+  //number of true information bits; could also include CRC of CB
   int Kprime = K - TB_params->F;
 
   // FPGA parameter preprocessing
-  static uint8_t multi_indata[27000 * 25]; // FPGA input data
-  static uint8_t multi_outdata[1100 * 25]; // FPGA output data
+  static uint8_t multi_indata[OAI_UL_LDPC_MAX_NUM_LLR * 25 + HEADER_SIZE]; // FPGA input data
+  static uint8_t multi_outdata[1100 * 25 + HEADER_SIZE]; // FPGA output data
 
+  //maximum possible K_b value
   int bg_len = TB_params->BG == 1 ? 22 : 10;
 
   // Calc input CB offset
@@ -133,6 +217,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   dec_conf.numFillerBits = TB_params->F;
   dec_conf.max_schedule = 0;
   dec_conf.SetIdx = 12;
+  //number of message words/number of rows in BG
   dec_conf.nRows = (dec_conf.BG == 1) ? 46 : 42;
 
   dec_conf.user_device = user_device;
@@ -140,7 +225,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   dec_conf.enc_write_device = enc_write_device;
   dec_conf.dec_read_device = dec_read_device;
   dec_conf.dec_write_device = dec_write_device;
-
+  //Z_c * (10 or 22) is K; Calculate the number of bytes in one CB
   int out_CBoffset = dec_conf.Zc * bg_len;
   if ((out_CBoffset & 0x7F) == 0)
     out_CBoffset = out_CBoffset / 8;
@@ -171,8 +256,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   fptr_ldpc = fopen("../../../cmake_targets/log/ulsim_ldpc_output.txt", "w");
   // ===================================
 #endif
-
+  //K' = ((A+L)+C*L)/C (TODO: cross check it with their Kprime value)
   int length_dec = lenWithCrc(TB_params->C, TB_params->A);
+  //Either CRC 24 or 16
   uint8_t crc_type = crcType(TB_params->C, TB_params->A);
   int no_iteration_ldpc = 2;
 
@@ -212,7 +298,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
       t_info.len += 1;
 
       args->TB_params = TB_params;
-      args->multi_indata = multi_indata;
+      args->multi_indata = &multi_indata[0] + HEADER_SIZE;
       args->no_iteration_ldpc = no_iteration_ldpc;
       args->r_first = r;
 
@@ -228,7 +314,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
       args->Kprime = Kprime;
 
       r_remaining = r_span;
-
+      //De-concatenation and De-rate matching; not 100 % sure
       task_t t = {.func = &nr_ulsch_FPGA_decoding_prepare_blocks, .args = args};
       pushTpool(ldpc_threadPool, t);
 
@@ -244,7 +330,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
 
   DevAssert(num_threads_prepare == t_info.len);
 
-  // wait for the prepare jobs to complete
+  // wait for the prepare jobs to complete. meaning all CBs are ready for decoding
   join_task_ans(t_info.ans);
 
   for (uint32_t job = 0; job < num_threads_prepare; job++) {
@@ -269,7 +355,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     // --------------------- copy FPGA output ---------------------
     // ------------------------------------------------------------
     nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
-    if (check_crc(multi_outdata, length_dec, crc_type)) {
+    //Why is crc check the same for all CBs? Is it the CRC check of the TB? Probably this checks just the CRC for the  first CB -> wrong needs to be fixed
+    if (check_crc(&multi_outdata[HEADER_SIZE], length_dec, crc_type)) {
 #ifdef DEBUG_CRC
       LOG_I(PHY, "Segment %d CRC OK\n", r);
 #endif
@@ -280,8 +367,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
 #endif
       no_iteration_ldpc = TB_params->max_ldpc_iterations;
     }
+    //copy result
     for (int i = 0; i < out_CBoffset; i++) {
-      segment_params->c[i] = multi_outdata[i + r * out_CBoffset];
+      segment_params->c[i] = multi_outdata[i + r * out_CBoffset + HEADER_SIZE];
     }
     segment_params->decodeSuccess = (no_iteration_ldpc < TB_params->max_ldpc_iterations);
     if (segment_params->decodeSuccess) {
@@ -379,7 +467,7 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
 
     memset(segment_params->c, 0, K >> 3);
 
-    // set first 2*Z_c bits to zeros
+    // set first 2*Z_c bits to zeros; are these the punctured bits?
     memset(&z[0], 0, 2 * Z * sizeof(int16_t));
     // set Filler bits
     memset((&z[0] + Kprime), 127, F * sizeof(int16_t));
