@@ -137,10 +137,19 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   static int8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
 
   const int N = p_decParams->BG == 2 ? 52 * p_decParams->Z : 68 * p_decParams->Z;
-  //copy all LLRs in internal buffer starting at HEADER_SIZE
-  time_stats->llrRes2llrOut;
   start_meas(&time_stats->total);
-  memcpy(&buffer_in[HEADER_SIZE], p_llr, N);
+  const int8_t max_level = 120;
+  //copy all LLRs in internal buffer starting at HEADER_SIZE
+  start_meas(&time_stats->total);
+   for(int i = 0; i < N; ++i)
+  {
+    if(p_llr[i] > max_level)
+      buffer_in[HEADER_SIZE + i] = max_level;
+    else if(p_llr[i] < -max_level)
+      buffer_in[HEADER_SIZE + i] = -max_level;
+    else
+      buffer_in[HEADER_SIZE + i] = p_llr[i];
+  }
   start_meas(&time_stats->llr2bit);
   int32_t niter = nrLDPC_decoder_FPGA_PYM(&buffer_in[0], &buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);
@@ -159,7 +168,13 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   }
   stop_meas(&time_stats->llrRes2llrOut);
   stop_meas(&time_stats->total);
-  //TODO: Check crc, if crc function is provided 
+  if(p_decParams->check_crc != NULL)
+  {
+    if (!p_decParams->check_crc((uint8_t*)p_out, p_decParams->Kprime, p_decParams->crc_type)) 
+    {
+      LOG_D(PHY, "Segment CRC NOK!\n");
+    }
+  }
   return niter;
 } 
 
