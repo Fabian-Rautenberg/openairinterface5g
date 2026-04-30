@@ -86,8 +86,47 @@ char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));
  *	actually transferred.  (This is true on both 32-bit and 64-bit
  *	systems.)
  */
+#ifdef DEBUG_HW_HDR
+  #define PRINT_ORS_TX_HEADER(tx_hdr) do { \
+    printf("Tx hdr{max_schedule=%u, mb=%u, id=%u, max_iter=%u, toked_iter=%u, term_no_change=%u, term_pass=%u, include_parity=%u, hard_op_o=%u, sc_idx=%u, bg=%u, z_set=%u, z_j=%u, magic=0x%08x, payload_len=%u}\n", \
+    (tx_hdr).max_schedule, \
+    (tx_hdr).mb, \
+    (tx_hdr).id, \
+    (tx_hdr).max_iter, \
+    (tx_hdr).toked_iter, \
+    (tx_hdr).term_on_no_change, \
+    (tx_hdr).term_on_pass, \
+    (tx_hdr).include_parity_op, \
+    (tx_hdr).hard_op_o, \
+    (tx_hdr).sc_idx, \
+    (tx_hdr).bg, \
+    (tx_hdr).z_set, \
+    (tx_hdr).z_j, \
+    (tx_hdr).magic_field, \
+    (tx_hdr).payload_len \
+  ); \
+    }while(0)
+  #define PRINT_ORS_RX_HEADER(rx_hdr) do { \
+    printf("Rx hdr{mb=%u, id=%u, toked_iter=%u, term_no_change=%u, term_pass=%u, parity_check_pass=%u, hard_op_o=%u, bg=%u, z_set=%u, z_j=%u, magic=0x%08x, payload_len=%u}\n", \
+        (rx_hdr).mb, \
+        (rx_hdr).id, \
+        (rx_hdr).toked_iter, \
+        (rx_hdr).term_on_no_change, \
+        (rx_hdr).term_pass, \
+        (rx_hdr).parity_check_pass, \
+        (rx_hdr).hard_op_o, \
+        (rx_hdr).bg, \
+        (rx_hdr).z_set, \
+        (rx_hdr).z_j, \
+        (rx_hdr).magic_field, \
+        (rx_hdr).payload_len); \
+    }while(0)
 
- typedef struct ors_header_s {
+#else
+  #define PRINT_ORS_RX_HEADER(rx_hdr) ((void)(rx_hdr))
+  #define PRINT_ORS_TX_HEADER(tx_hdr) ((void)(tx_hdr))
+#endif
+ typedef struct ors_tx_header_s {
   uint8_t max_schedule;
   uint8_t mb;
   uint8_t id;
@@ -102,14 +141,29 @@ char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));
   uint8_t z_set;
   uint8_t z_j;
   uint32_t magic_field;
-  uint32_t payload_len;
- } ors_header_t;
+  uint32_t payload_len; //< numb of 16 bytes chunks
+ } ors_tx_header_t;
+
+ typedef struct ors_rx_header_s {
+  uint8_t mb;
+  uint8_t id;
+  uint8_t toked_iter;
+  uint8_t term_on_no_change;
+  uint8_t term_pass;
+  uint8_t parity_check_pass;
+  uint8_t hard_op_o;
+  uint8_t bg;
+  uint8_t z_set;
+  uint8_t z_j;
+  uint32_t magic_field;
+  uint32_t payload_len; //< numb of 16 bytes chunks
+ } ors_rx_header_t;
 #define ORS_MAGIC (0x7E7EU)
 #define RW_MAX_SIZE 0x7ffff000
 
 int verbose = 0;
 
-void write_header_to_buffer(const ors_header_t h, void* buffer)
+void write_header_to_buffer(const ors_tx_header_t h, void* buffer)
 {
  uint64_t tmp[2] = {0};
  tmp[0] =
@@ -133,21 +187,19 @@ tmp[1] =
   memcpy(buffer, tmp, sizeof(tmp));
 }
 
-ors_header_t read_header_from_buffer(const void* buffer)
+ors_rx_header_t read_header_from_buffer(const void* buffer)
 {
   const uint64_t *w0 = (const uint64_t*)buffer;
   const uint64_t *w1 = (const uint64_t*)(buffer + sizeof(uint64_t));
-  ors_header_t ret = {};
+  ors_rx_header_t ret = {};
 
-  ret.max_schedule       = (*w0 >> 38) & 0xF;
   ret.mb                 = (*w0 >> 32) & 0x3F;
   ret.id                 = (*w0 >> 24) & 0xFF;
   ret.toked_iter         = (*w0 >> 18) & 0x3F;
   ret.term_on_no_change  = (*w0 >> 17) & 0x1;
-  ret.term_on_pass       = (*w0 >> 16) & 0x1;
-  ret.include_parity_op  = (*w0 >> 15) & 0x1;
+  ret.term_pass          = (*w0 >> 16) & 0x1;
+  ret.parity_check_pass  = (*w0 >> 15) & 0x1;
   ret.hard_op_o          = (*w0 >> 14) & 0x1;
-  ret.sc_idx             = (*w0 >> 9)  & 0xF;
   ret.bg                 = (*w0 >> 6)  & 0x7;
   ret.z_set              = (*w0 >> 3)  & 0x7;
   ret.z_j                =  *w0        & 0x7;
@@ -526,8 +578,8 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
   /* read data from AXI ST into buffer using SGDMA */
   rc = read_to_buffer(dev_dec_read, fd_dec_read, DecOut, size, 0);
 
-  const ors_header_t header = read_header_from_buffer(DecOut);
-
+  const ors_rx_header_t header = read_header_from_buffer(DecOut);
+  PRINT_ORS_RX_HEADER(header);
   if (rc < 0)
     goto out;
 
@@ -616,7 +668,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   size = In_dwNumItems;
   const uint32_t numb_of_16B_units = (size + 15) / 16;
 
-  ors_header_t header = {
+  ors_tx_header_t header = {
     .max_schedule = max_schedule,
     .mb = mb - kb, //< mb stores the total number of columns of the BG, kb stores just the number of msg columns    
     .id = id,
@@ -632,6 +684,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     .magic_field = ORS_MAGIC,
     .payload_len = numb_of_16B_units //< payload size in 16 Byte units
   };
+  PRINT_ORS_TX_HEADER(header);
   //insert header infront of data
   write_header_to_buffer(header, data);
 
