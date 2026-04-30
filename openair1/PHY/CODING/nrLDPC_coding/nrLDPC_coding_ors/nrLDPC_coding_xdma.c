@@ -22,6 +22,8 @@
 
 #define OAI_UL_LDPC_MAX_NUM_LLR (27000U) // 26112 // NR_LDPC_NCOL_BG1*NR_LDPC_ZMAX = 68*384
 #define MAX_CB_SIZE_IN_BYTE_UNITS (1100U) // 8488/8 -> 1056 
+#define NUMB_OF_MAX_DEC_ITER (63U)
+#define NUMB_OF_MIN_DEC_ITER (1U)
 // #define DEBUG_CRC
 #ifdef DEBUG_CRC
 #define PRINT_CRC_CHECK(a) a
@@ -112,7 +114,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   DecIFConf dec_conf = {0};
   dec_conf.Zc = p_decParams->Z;
   dec_conf.BG = p_decParams->BG;
-  dec_conf.max_iter = p_decParams->numMaxIter;
+  dec_conf.max_iter = min(max(p_decParams->numMaxIter, NUMB_OF_MIN_DEC_ITER), NUMB_OF_MAX_DEC_ITER);
   dec_conf.numCB = 1; 
   // input soft bits length; not sure if calculation is correct
   dec_conf.numChannelLls = (p_decParams->Kprime - 2 * p_decParams->Z);
@@ -157,7 +159,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   }
   stop_meas(&time_stats->llrRes2llrOut);
   stop_meas(&time_stats->total);
-
+  //TODO: Check crc, if crc function is provided 
   return niter;
 } 
 
