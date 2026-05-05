@@ -37,3 +37,29 @@ The LDPC licenz is only valid for about 8 hours after that the card has to be re
     - 560 (Not tested)
     - 3840 (Not tested)
     - 8448 (Tested)
+
+## SW architecture Overview
+Inside the directory nrLDPC_coding_segment/ is the slot decoding implementation in SW. The entry point is the function nrLDPC_coding_decoder, which gets multiple slots passed. It iterates over all slots and waits at the end for all started tasked (threads) to be completed. The function nrLDPC_prepare_TB_decoding is called for every slot. Inside this function it is iterrated over all CBs and the function pushes tasks on the pool, which can be handeld in parallel. The task to handle is nr_process_decode_segment. Here are things done like deinterleaving, derate matching and decoding. After the decoding the task is finished. The decoding call is done to LDPCdecoder (nrLDPC_decoder/ SW implementation (for one segment)).
+
+Inside the directory nrLDPC_coding_xdma/ is the slot decoding for the XDMA HW-Acc offloading. It uses the slot decoding interface (nrLDPC_coding_decoder). It iterates over all slots. And pass one slot to decoder_xdma. There it iterarets over all code blocks and do deinterleaving and deratematching parallel. Tasked are again pushed to the threadpool. When all CBs are done deinterleaved and deratematched decode is called for all CBs. This is done in the function nrLDPC_decoder_FPGA_PYM. All CBs are transferred in one DMA write. The result is also read in just one DMA transfer. This makes effective use of PCIe throughput. It allows parallelization one the HW with multiple LDPC cores. HW is responsible of distributing the work among them. Also in the pure SW solution the main thread (work pusher) waits until all jobs (CBs) are done.
+
+SW imp:
+Job/CB
+----------------
+|deinterleaving|
+|deratematching|
+|decoding      |
+----------------
+wait for all slots
+
+XDMA offloading:
+Job/CB
+----------------
+|deinterleaving|
+|deratematching|
+|              |
+----------------
+wait for this job is done (one slot)
+decoding for one slot (all CBs), when this is done no other slot is handeld (not 100% efficient/depends on the decoding time)
+
+Start with offloading one CB (SW imp) then continue adapt the SW/HW interface to fulfill the XDMA offloading, because transferring multiple CBs in one DMA transfer is more efficient and allows parallel use of multiple decoder cores.
