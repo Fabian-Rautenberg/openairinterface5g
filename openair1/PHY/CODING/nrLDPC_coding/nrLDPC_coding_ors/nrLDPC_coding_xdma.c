@@ -117,7 +117,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   dec_conf.max_iter = min(max(p_decParams->numMaxIter, NUMB_OF_MIN_DEC_ITER), NUMB_OF_MAX_DEC_ITER);
   dec_conf.numCB = 1; 
   // input soft bits length; not sure if calculation is correct
-  dec_conf.numChannelLls = (p_decParams->Kprime - 2 * p_decParams->Z);
+  dec_conf.numChannelLls = p_decParams->Kprime;
   // filler bits length
   dec_conf.numFillerBits = 0;
   dec_conf.max_schedule = 0;
@@ -153,7 +153,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   start_meas(&time_stats->llr2bit);
   int32_t niter = nrLDPC_decoder_FPGA_PYM(&buffer_in[0], &buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);
-  
+  //has to be the full K copied or just K'?
   const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
   int cK = K; 
   if((cK % 8) != 0)
