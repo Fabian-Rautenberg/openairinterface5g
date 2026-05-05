@@ -33,7 +33,7 @@ The LDPC licenz is only valid for about 8 hours after that the card has to be re
 ## To be done:
 
 - Test with different K' values. At least this values should be tested. Recommend intermediate values as well.
-    - 192 (Currently not working)
+    - 192 (Tested)
     - 560 (Not tested)
     - 3840 (Not tested)
     - 8448 (Tested)

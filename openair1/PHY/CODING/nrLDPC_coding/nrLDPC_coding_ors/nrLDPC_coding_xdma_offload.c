@@ -75,6 +75,7 @@ char *dev_dec_write, *dev_dec_read;
 char allocated_write[24 * 1024] __attribute__((aligned(4096)));
 char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));
 
+static uint16_t last_set_header_id = 0;
 // dma_from_device.c
 
 // [Start] #include "dma_utils.c" ===================================
@@ -547,25 +548,14 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
   uint32_t Out_dwNumItems_p128;
   uint32_t Out_dwNumItems;
 
-  if (CB_num & 0x01) // odd cb number
-  {
-    if ((OutDataNUM & 0xFF) == 0)
-      Out_dwNumItems_p128 = OutDataNUM;
-    else
-      Out_dwNumItems_p128 = 256 * ((OutDataNUM / 256) + 1);
+  //check if bit size is a multiple of 128 bit, if not make it to the next closest
+  if ((OutDataNUM & 0x7F) == 0)
+    Out_dwNumItems_p128 = OutDataNUM;
+  else
+    Out_dwNumItems_p128 = 128 * ((OutDataNUM / 128) + 1);
 
-    Out_dwNumItems = (Out_dwNumItems_p128 * CB_num) >> 3; //< number of byte units to read output bits
-  } else {
-    if ((OutDataNUM & 0x7F) == 0)
-      Out_dwNumItems_p128 = OutDataNUM;
-    else
-      Out_dwNumItems_p128 = 128 * ((OutDataNUM / 128) + 1);
-
-    Out_dwNumItems = (Out_dwNumItems_p128 * CB_num) >> 3;
-    if ((Out_dwNumItems & 0x1f) != 0)
-      Out_dwNumItems = ((Out_dwNumItems + 31) >> 5) << 5;
-
-  }
+  Out_dwNumItems = (Out_dwNumItems_p128 * CB_num) >> 3; //< bits to bytes
+  
   //payload bits + header
   size = Out_dwNumItems + HEADER_SIZE;
 
@@ -580,11 +570,15 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
 
   const ors_rx_header_t header = read_header_from_buffer(DecOut);
   PRINT_ORS_RX_HEADER(header);
+  if(header.id != last_set_header_id)
+  {
+    printf("Header ID mismatch. ID should be %u got %u.\n", last_set_header_id, header.id);
+    rc = -(EINVAL);
+  }
   if (rc < 0)
     goto out;
 
   rc = header.toked_iter;
-
 out:
 
   return rc;
@@ -609,7 +603,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   // this values should be given by Shane
   max_schedule = 0;
   mb = Confparam.mb;
-  id = id_c++;
+  id = last_set_header_id = id_c++;
   bg = Confparam.BGSel - 1;
   z_set = Confparam.z_set - 1;
   z_j = Confparam.z_j;
@@ -646,13 +640,11 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     kb = 6;
 
   Z_val = (unsigned int)(z_a << z_j);
-  //ctrl_data =
-  //    (max_schedule << 30) | ((mb - kb) << 24) | (id << 19) | (max_iter << 13) | (sc_idx << 9) | (bg << 6) | (z_set) << 3 | z_j;
 
   uint32_t InDataNUM = Z_val * mb;
   uint32_t In_dwNumItems_p128;
   uint32_t In_dwNumItems;
-
+  //bytes to bits
   InDataNUM = Z_val * mb * 8; 
   //ensure input is a multiple of 128 bit or 16 byte
   if ((InDataNUM & 0x7F) == 0)
@@ -660,12 +652,11 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   else
     In_dwNumItems_p128 = 128 * ((InDataNUM / 128) + 1);
 
-  //calculate number to transfered bytes. This will ensure input is a multiple of 32 byte.
+  //bits to bytes
   In_dwNumItems = (In_dwNumItems_p128 * CB_num) >> 3;
-  if ((In_dwNumItems & 0x1f) != 0)
-    In_dwNumItems = ((In_dwNumItems + 31) >> 5) << 5;
 
   size = In_dwNumItems;
+  //bytes to 16byte chunks
   const uint32_t numb_of_16B_units = (size + 15) / 16;
 
   ors_tx_header_t header = {
