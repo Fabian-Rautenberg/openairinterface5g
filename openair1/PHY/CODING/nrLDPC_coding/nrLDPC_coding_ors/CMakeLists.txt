@@ -7,7 +7,7 @@
 
 add_library(ldpc_ors MODULE
             nrLDPC_coding_xdma_offload.c
-            nrLDPCOFF_coding_xdma.c
+            nrLDPC_coding_xdma.c
             ../nrLDPC_coding_segment/nr_rate_matching.c
             ../nrLDPC_coding_segment/nrLDPC_coding_segment_encoder.c
             ../../nrLDPC_encoder/ldpc_encoder_optim8segmulti.c
