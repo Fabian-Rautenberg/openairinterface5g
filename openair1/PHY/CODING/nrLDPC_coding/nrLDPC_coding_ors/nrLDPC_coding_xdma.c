@@ -114,6 +114,44 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   DecIFConf dec_conf = {0};
   dec_conf.Zc = p_decParams->Z;
   dec_conf.BG = p_decParams->BG;
+  //select correct BG 
+  int Kb = 0;
+  if(p_decParams->BG == 1)
+  {
+    Kb = 22;
+    dec_conf.BG = 1;
+  }
+  else //second BG
+  {
+    #define USE_EXACT_BG (false) //< This feature performs worse in decoding. Reducing decoding reliability. If this feature is used less data are transmitted to the HW and received. 
+    #if USE_EXACT_BG 
+    //The following has to be valid K_b * Z_c >= K'
+    if(6 * p_decParams->Z >= p_decParams->Kprime)
+    {
+      Kb = 6;
+      dec_conf.BG = 5;
+    }
+    else if(8 * p_decParams->Z >= p_decParams->Kprime)
+    {
+      Kb = 8;
+      dec_conf.BG = 4;
+    }
+    else if(9 * p_decParams->Z >= p_decParams->Kprime)
+    {
+      Kb = 9;
+      dec_conf.BG = 3;
+    }
+    else // 10 * Z_c >= K'
+    {
+      Kb = 10;
+      dec_conf.BG = 2;
+    }
+    #else
+    Kb = 10;
+    dec_conf.BG = 2;
+    #endif
+    
+  }
   dec_conf.max_iter = min(max(p_decParams->numMaxIter, NUMB_OF_MIN_DEC_ITER), NUMB_OF_MAX_DEC_ITER);
   dec_conf.numCB = 1; 
   // input soft bits length; not sure if calculation is correct
@@ -123,7 +161,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   dec_conf.max_schedule = 0;
   dec_conf.SetIdx = 11;
   //number of message words/number of rows in BG
-  dec_conf.nRows = (dec_conf.BG == 1) ? 46 : 42;
+  dec_conf.nRows = (p_decParams->BG == 1) ? 46 : 42;
 
   dec_conf.user_device = user_device;
   dec_conf.enc_read_device = enc_read_device;
@@ -137,11 +175,15 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   static int8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
 
   const int N = p_decParams->BG == 2 ? 52 * p_decParams->Z : 68 * p_decParams->Z;
-  start_meas(&time_stats->total);
+  const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
+  const int punctured_bits = 2 * p_decParams->Z; 
   const int8_t max_level = 120;
   //copy all LLRs in internal buffer starting at HEADER_SIZE
   start_meas(&time_stats->total);
-   for(int i = 0; i < N; ++i)
+  //copy puncutred bits
+  memcpy(&buffer_in[HEADER_SIZE], p_llr, punctured_bits * sizeof(*p_llr));
+  //copy information bits
+  for(int i = punctured_bits; i < Kb * p_decParams->Z + punctured_bits; ++i)
   {
     if(p_llr[i] > max_level)
       buffer_in[HEADER_SIZE + i] = max_level;
@@ -150,12 +192,20 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
     else
       buffer_in[HEADER_SIZE + i] = p_llr[i];
   }
+  //copy parity bits
+  for(int i = Kb * p_decParams->Z + punctured_bits, j = K + punctured_bits; j < N; ++i, ++j)
+  {
+    if(p_llr[j] > max_level)
+      buffer_in[HEADER_SIZE + i] = max_level;
+    else if(p_llr[j] < -max_level)
+      buffer_in[HEADER_SIZE + i] = -max_level;
+    else
+      buffer_in[HEADER_SIZE + i] = p_llr[j];
+  }
   start_meas(&time_stats->llr2bit);
   int32_t niter = nrLDPC_decoder_FPGA_PYM(&buffer_in[0], &buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);
-  //has to be the full K copied or just K'?
-  const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
-  int cK = K; 
+  int cK = Kb * p_decParams->Z; 
   if((cK % 8) != 0)
   {
     cK = (cK + 7) / 8; //ceil up
@@ -166,6 +216,9 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   {
     p_out[i] = (int8_t)reverse_8bit((uint8_t)buffer_out[HEADER_SIZE + i]);
   }
+  //set the remaining bits to zero
+  const int rem = ((K - cK) + 7) / 8;
+  memset(p_out + cK, 0, rem);
   stop_meas(&time_stats->llrRes2llrOut);
   stop_meas(&time_stats->total);
   if(p_decParams->check_crc != NULL)
