@@ -193,7 +193,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
       buffer_in[HEADER_SIZE + i] = p_llr[i];
   }
   //copy parity bits
-  for(int i = Kb * p_decParams->Z + punctured_bits, j = K + punctured_bits; j < N; ++i, ++j)
+  for(int i = Kb * p_decParams->Z + punctured_bits, j = K + punctured_bits; j < N /*+ punctured_bits (not sure if +2*Z_c) */; ++i, ++j)
   {
     if(p_llr[j] > max_level)
       buffer_in[HEADER_SIZE + i] = max_level;
