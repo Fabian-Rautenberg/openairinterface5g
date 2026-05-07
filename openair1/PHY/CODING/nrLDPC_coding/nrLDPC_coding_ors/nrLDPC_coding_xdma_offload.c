@@ -629,23 +629,33 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     z_a = 15;
 
   if (bg == 0)
+  {
     kb = 22;
+  }
   else if (bg == 1)
+  {
     kb = 10;
+  }
   else if (bg == 2)
+  {
     kb = 9;
+  }
   else if (bg == 3)
+  {
     kb = 8;
+  }
   else
+  {
     kb = 6;
+  }
 
   Z_val = (unsigned int)(z_a << z_j);
 
-  uint32_t InDataNUM = Z_val * mb;
+  uint32_t InDataNUM = 0;
   uint32_t In_dwNumItems_p128;
   uint32_t In_dwNumItems;
   //bytes to bits
-  InDataNUM = Z_val * mb * 8; 
+  InDataNUM = Z_val * (mb + kb) * 8;  //< mb (Number of parity bits) kb (number of informations bits)
   //ensure input is a multiple of 128 bit or 16 byte
   if ((InDataNUM & 0x7F) == 0)
     In_dwNumItems_p128 = InDataNUM;
@@ -657,11 +667,11 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
 
   size = In_dwNumItems;
   //bytes to 16byte chunks
-  const uint32_t numb_of_16B_units = (size + 15) / 16;
+  const uint32_t numb_of_16B_units = size / 16;
 
   ors_tx_header_t header = {
     .max_schedule = max_schedule,
-    .mb = mb - kb, //< mb stores the total number of columns of the BG, kb stores just the number of msg columns    
+    .mb = mb,     
     .id = id,
     .max_iter = max_iter,
     .term_on_no_change = 1,
@@ -871,30 +881,12 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
 
   // calc CB_num and mb
   Confparam.CB_num = CB_num;
-  //This calculate the number of columns -> number of codewords
-  if (baseGraph == 1)
-    Confparam.mb = 22 + nRows;
-  else
-    Confparam.mb = 10 + nRows;
+  Confparam.mb = nRows;
 
   // set BGSel, z_set, z_j
   Confparam.BGSel = baseGraph;
   Confparam.z_set = i_LS + 1;
   Confparam.z_j = z_j;
-
-  // Calc input CB offset
-  input_CBoffset = Zc * Confparam.mb * 8;
-  if ((input_CBoffset & 0x7F) == 0)
-    input_CBoffset = input_CBoffset / 8;
-  else
-    input_CBoffset = 16 * ((input_CBoffset / 128) + 1);
-
-  // Calc output CB offset
-  output_CBoffset = Zc * (Confparam.mb - nRows);
-  if ((output_CBoffset & 0x7F) == 0)
-    output_CBoffset = output_CBoffset / 8;
-  else
-    output_CBoffset = 16 * ((output_CBoffset / 128) + 1);
 
   // LDPC accelerator start
   // write into accelerator

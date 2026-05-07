@@ -33,10 +33,12 @@ The LDPC licenz is only valid for about 8 hours after that the card has to be re
 ## To be done:
 
 - Test with different K' values. At least this values should be tested. Recommend intermediate values as well.
-    - 192 (Tested)
-    - 560 (Not tested)
-    - 3840 (Not tested)
-    - 8448 (Tested)
+    - 192 (ldpctest checked with high SNR value)
+    - 560 (ldpctest checked with high SNR value)
+    - 600 (ldpctest checked with high SNR value)
+    - 2200 (ldpctest checked with high SNR value)
+    - 3840 (ldpctest checked with high SNR value)
+    - 8448 (ldpctest checked with high SNR value)
 
 ## SW architecture Overview
 Inside the directory nrLDPC_coding_segment/ is the slot decoding implementation in SW. The entry point is the function nrLDPC_coding_decoder, which gets multiple slots passed. It iterates over all slots and waits at the end for all started tasked (threads) to be completed. The function nrLDPC_prepare_TB_decoding is called for every slot. Inside this function it is iterrated over all CBs and the function pushes tasks on the pool, which can be handeld in parallel. The task to handle is nr_process_decode_segment. Here are things done like deinterleaving, derate matching and decoding. After the decoding the task is finished. The decoding call is done to LDPCdecoder (nrLDPC_decoder/ SW implementation (for one segment)).
