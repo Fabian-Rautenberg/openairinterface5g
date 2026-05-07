@@ -66,9 +66,9 @@ typedef struct args_fpga_decode_prepare_s {
   task_ans_t *ans; /*!< pointer to the answer that is used by thread pool to detect job completion */
 } args_fpga_decode_prepare_t;
 
-int32_t nrLDPC_coding_init(void);
-int32_t nrLDPC_coding_shutdown(void);
-int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx);
+int32_t ors_nrLDPC_coding_init(void);
+int32_t ors_nrLDPC_coding_shutdown(void);
+int32_t ors_nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx);
 // int32_t nrLDPC_coding_encoder(void);
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool);
 void nr_ulsch_FPGA_decoding_prepare_blocks(void *args);
@@ -203,7 +203,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
       buffer_in[HEADER_SIZE + i] = p_llr[j];
   }
   start_meas(&time_stats->llr2bit);
-  int32_t niter = nrLDPC_decoder_FPGA_PYM(&buffer_in[0], &buffer_out[0], dec_conf);
+  int32_t niter = nrLDPC_decoder_FPGA_PYM((uint8_t*)&buffer_in[0], (uint8_t*)&buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);
   int cK = Kb * p_decParams->Z; 
   if((cK % 8) != 0)
@@ -243,7 +243,7 @@ static uint8_t reverse_8bit(uint8_t byte)
 
 
 
-int32_t nrLDPC_coding_init(void)
+int32_t ors_nrLDPC_coding_init(void)
 {
   paramdef_t LoaderParams[] = {
       {"num_threads_prepare", NULL, 0, .iptr = &num_threads_prepare_max, .defintval = 0, TYPE_INT, 0, NULL},
@@ -258,12 +258,12 @@ int32_t nrLDPC_coding_init(void)
   return 0;
 }
 
-int32_t nrLDPC_coding_shutdown(void)
+int32_t ors_nrLDPC_coding_shutdown(void)
 {
   return 0;
 }
 
-int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx)
+int32_t ors_nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx)
 {
   int nbDecode = 0;
   for (int ULSCH_id = 0; ULSCH_id < slot_params->nb_TBs; ULSCH_id++)
