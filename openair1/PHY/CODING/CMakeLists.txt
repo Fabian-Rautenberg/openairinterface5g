@@ -22,16 +22,24 @@ add_library(ldpc MODULE
             nrLDPC_decoder/nrLDPC_decoder.c
             nrLDPC_encoder/ldpc_encoder_optim8segmulti.c
 )
+add_library(ldpc_seg_ors MODULE
+            nrLDPC_coding/nrLDPC_coding_ors/nrLDPC_coding_xdma_offload.c
+            nrLDPC_coding/nrLDPC_coding_ors/nrLDPC_coding_xdma.c
+            nrLDPC_encoder/ldpc_encoder_optim8segmulti.c
+)
 set_target_properties(ldpc PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+set_target_properties(ldpc_seg_ors PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 target_link_libraries(ldpc PRIVATE ldpc_segment ldpc_gen_HEADERS)
+target_link_libraries(ldpc_seg_ors PRIVATE ldpc_segment)
+target_include_directories(ldpc_seg_ors PRIVATE ./nrLDPC_coding/nrLDPC_coding_segment)
 
-add_dependencies(ldpctest ldpc ldpc_orig)
-add_dependencies(nr-softmodem ldpc ldpc_orig)
-add_dependencies(nr-uesoftmodem ldpc ldpc_orig)
-add_dependencies(nr_ulsim ldpc ldpc_orig)
-add_dependencies(nr_ulschsim ldpc ldpc_orig)
-add_dependencies(nr_dlsim ldpc ldpc_orig)
-add_dependencies(nr_dlschsim ldpc ldpc_orig)
+add_dependencies(ldpctest ldpc ldpc_orig ldpc_seg_ors)
+add_dependencies(nr-softmodem ldpc ldpc_orig ldpc_seg_ors)
+add_dependencies(nr-uesoftmodem ldpc ldpc_orig ldpc_seg_ors)
+add_dependencies(nr_ulsim ldpc ldpc_orig ldpc_seg_ors)
+add_dependencies(nr_ulschsim ldpc ldpc_orig ldpc_seg_ors)
+add_dependencies(nr_dlsim ldpc ldpc_orig ldpc_seg_ors)
+add_dependencies(nr_dlschsim ldpc ldpc_orig ldpc_seg_ors)
 
 add_library(crc_byte OBJECT crc_byte.c)
 
