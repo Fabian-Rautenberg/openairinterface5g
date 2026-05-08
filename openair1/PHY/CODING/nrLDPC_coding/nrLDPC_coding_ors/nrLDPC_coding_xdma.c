@@ -123,7 +123,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   }
   else //second BG
   {
-    #define USE_EXACT_BG (false) //< This feature performs worse in decoding. Reducing decoding reliability. If this feature is used less data are transmitted to the HW and received. 
+    #define USE_EXACT_BG (true)  
     #if USE_EXACT_BG 
     //The following has to be valid K_b * Z_c >= K'
     if(6 * p_decParams->Z >= p_decParams->Kprime)
@@ -174,7 +174,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   static int8_t buffer_in[MAX_IN_DEC_ARRAY_SIZE];
   static int8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
 
-  const int N = p_decParams->BG == 2 ? 52 * p_decParams->Z : 68 * p_decParams->Z;
+  const int N = p_decParams->BG == 2 ? 50 * p_decParams->Z : 66 * p_decParams->Z;
   const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
   const int punctured_bits = 2 * p_decParams->Z; 
   const int8_t max_level = 120;
@@ -183,7 +183,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   //copy puncutred bits
   memcpy(&buffer_in[HEADER_SIZE], p_llr, punctured_bits * sizeof(*p_llr));
   //copy information bits
-  for(int i = punctured_bits; i < Kb * p_decParams->Z + punctured_bits; ++i)
+  for(int i = punctured_bits; i < Kb * p_decParams->Z; ++i)
   {
     if(p_llr[i] > max_level)
       buffer_in[HEADER_SIZE + i] = max_level;
@@ -193,7 +193,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
       buffer_in[HEADER_SIZE + i] = p_llr[i];
   }
   //copy parity bits
-  for(int i = Kb * p_decParams->Z + punctured_bits, j = K + punctured_bits; j < N /*+ punctured_bits (not sure if +2*Z_c) */; ++i, ++j)
+  for(int i = Kb * p_decParams->Z, j = K; j < N + punctured_bits; ++i, ++j)
   {
     if(p_llr[j] > max_level)
       buffer_in[HEADER_SIZE + i] = max_level;
