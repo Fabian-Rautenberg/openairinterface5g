@@ -67,10 +67,10 @@
 
 typedef unsigned long long U64;
 void* map_base;
-int fd;
-int fd_enc_write, fd_enc_read;
+int fd = -1;
+int fd_enc_write = -1, fd_enc_read = -1;
 char *dev_enc_write, *dev_enc_read;
-int fd_dec_write, fd_dec_read;
+int fd_dec_write = -1, fd_dec_read = -1;
 char *dev_dec_write, *dev_dec_read;
 char allocated_write[24 * 1024] __attribute__((aligned(4096)));
 char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));

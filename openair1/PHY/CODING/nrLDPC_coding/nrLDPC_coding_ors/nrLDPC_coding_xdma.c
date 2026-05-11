@@ -171,8 +171,8 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   
   #define MAX_IN_DEC_ARRAY_SIZE (OAI_UL_LDPC_MAX_NUM_LLR + HEADER_SIZE)
   #define MAX_OUT_DEC_ARRAY_SIZE (MAX_CB_SIZE_IN_BYTE_UNITS + HEADER_SIZE)
-  static int8_t buffer_in[MAX_IN_DEC_ARRAY_SIZE];
-  static int8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
+  int8_t buffer_in[MAX_IN_DEC_ARRAY_SIZE];
+  int8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
 
   const int N = p_decParams->BG == 2 ? 50 * p_decParams->Z : 66 * p_decParams->Z;
   const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;

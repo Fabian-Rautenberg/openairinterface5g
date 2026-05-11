@@ -255,12 +255,12 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
 
 int32_t nrLDPC_coding_init(void)
 {
-  return 0;
+  return LDPCinit();
 }
 
 int32_t nrLDPC_coding_shutdown(void)
 {
-  return 0;
+  return LDPCshutdown();
 }
 
 int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_decoding_parameters)

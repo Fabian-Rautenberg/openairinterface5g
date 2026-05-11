@@ -18,6 +18,8 @@ int free_LDPClib(ldpc_interface_t *ldpc_interface);
 
 LDPC_decoderfunc_t LDPCdecoder;
 LDPC_encoderfunc_t LDPCencoder;
+LDPC_initfunc_t LDPCinit;
+LDPC_shutdownfunc_t LDPCshutdown;
 
 // inline functions:
 #endif
