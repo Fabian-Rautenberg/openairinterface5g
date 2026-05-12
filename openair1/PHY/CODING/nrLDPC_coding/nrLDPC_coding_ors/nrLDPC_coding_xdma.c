@@ -159,7 +159,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   // filler bits length
   dec_conf.numFillerBits = 0;
   dec_conf.max_schedule = 0;
-  dec_conf.SetIdx = 11;
+  dec_conf.SetIdx = 12;
   //number of message words/number of rows in BG
   dec_conf.nRows = (p_decParams->BG == 1) ? 46 : 42;
 
