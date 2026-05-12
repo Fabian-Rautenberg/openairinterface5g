@@ -176,14 +176,15 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
 
   const int N = p_decParams->BG == 2 ? 50 * p_decParams->Z : 66 * p_decParams->Z;
   const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
+  const int F = K - p_decParams->Kprime;
   const int punctured_bits = 2 * p_decParams->Z; 
   const int8_t max_level = 120;
   //copy all LLRs in internal buffer starting at HEADER_SIZE
   start_meas(&time_stats->total);
-  //copy puncutred bits
+  //copy punctured bits
   memcpy(&buffer_in[HEADER_SIZE], p_llr, punctured_bits * sizeof(*p_llr));
   //copy information bits
-  for(int i = punctured_bits; i < Kb * p_decParams->Z; ++i)
+  for(int i = punctured_bits; i < p_decParams->Kprime; ++i)
   {
     if(p_llr[i] > max_level)
       buffer_in[HEADER_SIZE + i] = max_level;
@@ -192,6 +193,8 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
     else
       buffer_in[HEADER_SIZE + i] = p_llr[i];
   }
+  //set filler bits
+  memset(&buffer_in[HEADER_SIZE + p_decParams->Kprime], max_level, F);
   //copy parity bits
   for(int i = Kb * p_decParams->Z, j = K; j < N + punctured_bits; ++i, ++j)
   {
@@ -205,11 +208,8 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   start_meas(&time_stats->llr2bit);
   int32_t niter = nrLDPC_decoder_FPGA_PYM((uint8_t*)&buffer_in[0], (uint8_t*)&buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);
-  int cK = Kb * p_decParams->Z; 
-  if((cK % 8) != 0)
-  {
-    cK = (cK + 7) / 8; //ceil up
-  }
+  //calculate number of 8 bit units to copy
+  const int cK = (Kb * p_decParams->Z + 7) / 8; 
   start_meas(&time_stats->llrRes2llrOut);
   //copy into out buffer and reverse bits
   for(int i = 0; i < cK; ++i)
@@ -217,13 +217,14 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
     p_out[i] = (int8_t)reverse_8bit((uint8_t)buffer_out[HEADER_SIZE + i]);
   }
   //set the remaining bits to zero
-  const int rem = ((K - cK) + 7) / 8;
+  const int rem = (K + 7) / 8 - cK;
   memset(p_out + cK, 0, rem);
   stop_meas(&time_stats->llrRes2llrOut);
   stop_meas(&time_stats->total);
   if(p_decParams->check_crc != NULL)
-  {
-    if (!p_decParams->check_crc((uint8_t*)p_out, p_decParams->Kprime, p_decParams->crc_type)) 
+  { 
+    const bool crc_valid = p_decParams->check_crc((uint8_t*)p_out, p_decParams->Kprime, p_decParams->crc_type);
+    if (!crc_valid) 
     {
       LOG_D(PHY, "Segment CRC NOK!\n");
     }
