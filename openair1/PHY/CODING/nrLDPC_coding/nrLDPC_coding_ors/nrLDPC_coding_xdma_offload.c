@@ -603,7 +603,8 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   // this values should be given by Shane
   max_schedule = 0;
   mb = Confparam.mb;
-  id = last_set_header_id = id_c++;
+  id = last_set_header_id = id_c;
+  id_c = (id_c + 1) % 256;
   bg = Confparam.BGSel - 1;
   z_set = Confparam.z_set - 1;
   z_j = Confparam.z_j;
