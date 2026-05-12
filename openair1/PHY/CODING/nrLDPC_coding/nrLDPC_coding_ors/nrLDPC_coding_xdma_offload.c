@@ -76,6 +76,8 @@ char allocated_write[24 * 1024] __attribute__((aligned(4096)));
 char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));
 
 static uint16_t last_set_header_id = 0;
+static pthread_mutex_t hw_rw_lock;
+
 // dma_from_device.c
 
 // [Start] #include "dma_utils.c" ===================================
@@ -711,6 +713,7 @@ out:
 
 int32_t test_dma_init(devices_t devices)
 {
+  pthread_mutex_init(&hw_rw_lock, NULL);
   int32_t ret = 0;
   /* ignore for now */
   (void)devices.user_device;
@@ -747,13 +750,13 @@ int32_t test_dma_init(devices_t devices)
 
 void dma_close()
 {
+  pthread_mutex_destroy(&hw_rw_lock);
   if(fd_dec_write > 0)
     close(fd_dec_write);
   if(fd_dec_read > 0)
     close(fd_dec_read);
-  
-  fd_dec_write = 0;
-  fd_dec_read = 0;
+  fd_dec_write = -1;
+  fd_dec_read = -1;
 }
 
 void dma_reset(devices_t devices)
@@ -888,7 +891,7 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   Confparam.BGSel = baseGraph;
   Confparam.z_set = i_LS + 1;
   Confparam.z_j = z_j;
-
+  pthread_mutex_lock(&hw_rw_lock);
   // LDPC accelerator start
   // write into accelerator
   if (test_dma_dec_write((char *)buf_in, Confparam) != 0) {
@@ -902,6 +905,8 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
     exit(1);
     printf("read exit!!\n");
   }
+  pthread_mutex_unlock(&hw_rw_lock);
+
 
   return numb_of_iter_or_err;
 }
