@@ -74,6 +74,7 @@ int fd_dec_write = -1, fd_dec_read = -1;
 char *dev_dec_write, *dev_dec_read;
 char allocated_write[24 * 1024] __attribute__((aligned(4096)));
 char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));
+double cpu_freq_GHz;
 
 static uint16_t last_set_header_id = 0;
 static pthread_mutex_t hw_rw_lock;
@@ -711,14 +712,50 @@ out:
   return rc;
 }
 
+void init_hw_timer()
+{
+  volatile uint32_t* base_hw_addr =  ((uint8_t*)map_base) + OFFSET_AXI_TIMER;
+  for(uint32_t i = 0; i < 2; ++i)
+  {
+    base_hw_addr[i * 4 + 1] = 0;
+    base_hw_addr[i * 4] |= 1U;
+    base_hw_addr[i * 4] &= ~(1U << 1);
+    base_hw_addr[i * 4] |= 1U << 3;
+    base_hw_addr[i * 4] &= ~(1U << 4);
+    base_hw_addr[i * 4] |= (1U << 5);
+    base_hw_addr[i * 4] &= ~(1U << 5);
+  }
+}
+
+void start_hw_timer()
+{
+  volatile uint32_t* base_hw_addr =  ((uint8_t*)map_base) + OFFSET_AXI_TIMER;
+  for(uint32_t i = 0; i < 2; ++i)
+  {
+    base_hw_addr[i * 4] &= ~(1U << 7);
+    base_hw_addr[i * 4 + 1] = 0;
+    base_hw_addr[i * 4] |= (1U << 5);
+    base_hw_addr[i * 4] &= ~(1U << 5);
+  }
+  //enable all timers
+  base_hw_addr[0] |= (1 << 10);
+}
+
+uint32_t get_hw_dec_latency_ticks()
+{
+  volatile uint32_t* base_hw_addr =  ((uint8_t*)map_base) + OFFSET_AXI_TIMER;
+  const uint32_t end = base_hw_addr[5];
+  const uint32_t start = base_hw_addr[1];
+  return end - start;
+}
+
 int32_t test_dma_init(devices_t devices)
 {
   pthread_mutex_init(&hw_rw_lock, NULL);
   int32_t ret = 0;
-  /* ignore for now */
-  (void)devices.user_device;
+  
   //device files already opened
-  if(fd_dec_write > 0 && fd_dec_read > 0)
+  if(fd_dec_write > 0 && fd_dec_read > 0 && fd > 0)
   {
     return ret;
   }
@@ -742,6 +779,26 @@ int32_t test_dma_init(devices_t devices)
     goto test_dma_out;
   }
 
+  fd = open(devices.user_device, O_RDWR | O_SYNC);
+  if(fd < 0)
+  {
+    printf("Failed to open %s!", devices.user_device);
+    close(fd_dec_write);
+    close(fd_dec_read);
+    ret = fd;
+    goto test_dma_out;
+  }
+
+  map_base = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  AssertFatal(map_base != (void*)-1, "MEMORY MAP AT ADDRESS %p FAILED\n", map_base);
+
+  *(volatile uint32_t*)(map_base + OFFSET_RESET) |= (1 << 8);
+  *(volatile uint32_t*)(map_base + OFFSET_RESET) &= ~(1 << 8);
+
+  cpu_freq_GHz = get_cpu_freq_GHz();
+
+  init_hw_timer();
+
   fflush(stdout);
   test_dma_out:
   return ret;
@@ -751,12 +808,18 @@ int32_t test_dma_init(devices_t devices)
 void dma_close()
 {
   pthread_mutex_destroy(&hw_rw_lock);
+  *(volatile uint32_t*)(map_base + OFFSET_RESET) |= (1 << 8);
+  *(volatile uint32_t*)(map_base + OFFSET_RESET) &= ~(1 << 8);
+  munmap(map_base, MAP_SIZE);
   if(fd_dec_write > 0)
     close(fd_dec_write);
   if(fd_dec_read > 0)
     close(fd_dec_read);
+  if(fd > 0)
+    close(fd);
   fd_dec_write = -1;
   fd_dec_read = -1;
+  fd = -1;
 }
 
 void dma_reset(devices_t devices)
@@ -813,14 +876,24 @@ void test_dma_shutdown()
   close(fd_dec_write);
   close(fd_dec_read);
   close(fd);
+}
 
+static void conv_hwtime2cputime(const uint32_t hw_ticks, time_stats_t* time)
+{
+  const double hw_freq_GHz = 0.25;
+  const double factor = cpu_freq_GHz/hw_freq_GHz;
+  time->trials++;
+  const oai_cputime_t cpu_ticks = (oai_cputime_t)(((double)hw_ticks)*factor);
+  time->diff += cpu_ticks;
+  time->diff_square += ((double)cpu_ticks) * ((double)cpu_ticks);
+  time->max = time->max > cpu_ticks ?time->max : cpu_ticks;
+  time->p_time = cpu_ticks;
+  time->meas_flag = 0;
 }
 
 // reg_rx.c
 int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_conf)
 {
-  struct timespec ts_start0; // evaluate time from input setting to output setting including xdma
-
   int Zc;
   int nRows;
   int baseGraph;
@@ -844,7 +917,6 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   };
 
   
-  clock_gettime(CLOCK_MONOTONIC, &ts_start0); // time start0
   // LDPC input parameter
   Zc = dec_conf.Zc; // shifting size
   nRows = dec_conf.nRows; // number of Rows
@@ -893,18 +965,24 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   Confparam.z_j = z_j;
   pthread_mutex_lock(&hw_rw_lock);
   // LDPC accelerator start
+  start_hw_timer();
+  start_meas(dec_conf.dec_write_time);
   // write into accelerator
   if (test_dma_dec_write((char *)buf_in, Confparam) != 0) {
     exit(1);
     printf("write exit!!\n");
   }
-
+  stop_meas(dec_conf.dec_write_time);
   // read output of accelerator
+  start_meas(dec_conf.dec_read_time);
   const int numb_of_iter_or_err = test_dma_dec_read((char *)buf_out, Confparam);
   if (numb_of_iter_or_err < 0) {
     exit(1);
     printf("read exit!!\n");
   }
+  stop_meas(dec_conf.dec_read_time);
+  const uint32_t hw_ticks = get_hw_dec_latency_ticks();
+  conv_hwtime2cputime(hw_ticks, dec_conf.hw_dec_time);
   pthread_mutex_unlock(&hw_rw_lock);
 
 

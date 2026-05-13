@@ -11,6 +11,7 @@
 #define __NRLDPC_CODING_XDMA_OFFLOAD__H_
 
 #include <stdint.h>
+#include "time_meas.h"
 
 #define DEVICE_NAME_DEFAULT_USER "/dev/xdma0_user"
 #define DEVICE_NAME_DEFAULT_ENC_READ "/dev/xdma0_c2h_1"
@@ -39,6 +40,9 @@ typedef struct {
   int nRows;
   int numChannelLls;
   int numFillerBits;
+  time_stats_t* dec_write_time;
+  time_stats_t* dec_read_time;
+  time_stats_t* hw_dec_time;
 } DecIFConf;
 
 int nrLDPC_decoder_FPGA_PYM(uint8_t *buf_in, uint8_t *buf_out, DecIFConf dec_conf);
