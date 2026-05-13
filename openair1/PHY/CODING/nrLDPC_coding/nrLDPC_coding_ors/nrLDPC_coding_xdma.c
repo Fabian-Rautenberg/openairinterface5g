@@ -112,6 +112,9 @@ int32_t LDPCshutdown(void)
 int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_out, t_nrLDPC_time_stats *time_stats, decode_abort_t *ab)
 {
   DecIFConf dec_conf = {0};
+  dec_conf.dec_write_time = &time_stats->llr2CnProcBuf;
+  dec_conf.dec_read_time = &time_stats->cn2bnProcBuf;
+  dec_conf.hw_dec_time = &time_stats->bnProc;
   dec_conf.Zc = p_decParams->Z;
   dec_conf.BG = p_decParams->BG;
   //select correct BG 
@@ -179,6 +182,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   const int F = K - p_decParams->Kprime;
   const int punctured_bits = 2 * p_decParams->Z; 
   const int8_t max_level = 120;
+  start_meas(&time_stats->llr2llrProcBuf);
   //copy all LLRs in internal buffer starting at HEADER_SIZE
   start_meas(&time_stats->total);
   //copy punctured bits
@@ -205,6 +209,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
     else
       buffer_in[HEADER_SIZE + i] = p_llr[j];
   }
+  stop_meas(&time_stats->llr2llrProcBuf);
   start_meas(&time_stats->llr2bit);
   int32_t niter = nrLDPC_decoder_FPGA_PYM((uint8_t*)&buffer_in[0], (uint8_t*)&buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);

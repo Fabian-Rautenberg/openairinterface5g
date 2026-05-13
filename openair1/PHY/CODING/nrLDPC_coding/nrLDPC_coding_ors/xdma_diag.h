@@ -87,7 +87,7 @@ typedef struct {
 #define htols(x) __bswap_16(x)
 #endif
 
-#define MAP_SIZE (32 * 1024UL)
+#define MAP_SIZE (1024UL * 1024UL)
 #define MAP_MASK (MAP_SIZE - 1)
 
 #define SIZE_DEFAULT (32)
@@ -97,8 +97,10 @@ typedef struct {
 #define OFFSET_DEC_OUT 0x0004
 #define OFFSET_ENC_IN 0x0008
 #define OFFSET_ENC_OUT 0x000c
-#define OFFSET_RESET 0x0020
+#define OFFSET_RESET 0x0004U
 #define PCIE_OFF 0x0030
+
+#define OFFSET_AXI_TIMER (0x10000U)
 
 #define CB_PROCESS_NUMBER 24 // add by JW
 #define CB_PROCESS_NUMBER_Dec 24
