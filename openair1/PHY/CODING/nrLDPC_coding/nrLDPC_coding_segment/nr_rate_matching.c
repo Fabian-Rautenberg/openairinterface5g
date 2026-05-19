@@ -609,7 +609,6 @@ int nr_rate_matching_ldpc_rx(uint32_t Tbslbrm,
     LOG_E(PHY, "nr_rate_matching: invalid parameter C %d\n", C);
     return -1;
   }
-
   //Bit selection
   uint32_t N = (BG == 1) ? (66 * Z) : (50 * Z);
   uint32_t Ncb;

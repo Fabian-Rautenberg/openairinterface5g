@@ -189,6 +189,8 @@ static void nr_process_decode_segment(void *arg)
   //////////////////////////////////////////////////////////////////////////////////////////
 
   ////////////////////////////////// pl =====> llrProcBuf //////////////////////////////////
+
+  //calculate the true number of parity bits. Depending on rvidx and clear flag 
   int decodeIterations = LDPCdecoder(p_decoderParms, l, llrProcBuf, p_procTime, rdata->abort_decode);
 
   if (decodeIterations < p_decoderParms->numMaxIter) {
@@ -247,7 +249,6 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
 
     task_t t = {.func = &nr_process_decode_segment, .args = rdata};
     pushTpool(nrLDPC_slot_decoding_parameters->threadPool, t);
-
     LOG_D(PHY, "Added a block to decode, in pipe: %d\n", r);
   }
   return nrLDPC_TB_decoding_parameters->C;

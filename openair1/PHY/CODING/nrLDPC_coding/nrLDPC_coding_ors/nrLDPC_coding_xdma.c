@@ -249,7 +249,7 @@ static uint8_t reverse_8bit(uint8_t byte)
 
 
 
-int32_t ors_nrLDPC_coding_init(void)
+int32_t nrLDPC_coding_init(void)
 {
   paramdef_t LoaderParams[] = {
       {"num_threads_prepare", NULL, 0, .iptr = &num_threads_prepare_max, .defintval = 0, TYPE_INT, 0, NULL},
@@ -258,18 +258,17 @@ int32_t ors_nrLDPC_coding_init(void)
       {"enc_write_device", NULL, 0, .strptr = &enc_write_device, .defstrval = DEVICE_NAME_DEFAULT_ENC_WRITE, TYPE_STRING, 0, NULL},
       {"dec_read_device", NULL, 0, .strptr = &dec_read_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_READ, TYPE_STRING, 0, NULL},
       {"dec_write_device", NULL, 0, .strptr = &dec_write_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_WRITE, TYPE_STRING, 0, NULL}};
-  config_get(config_get_if(), LoaderParams, sizeofArray(LoaderParams), "nrLDPC_coding_xdma");
-  AssertFatal(num_threads_prepare_max != 0, "nrLDPC_coding_xdma.num_threads_prepare was not provided");
-
-  return 0;
+  //config_get(config_get_if(), LoaderParams, sizeofArray(LoaderParams), "nrLDPC_coding_xdma");
+  //AssertFatal(num_threads_prepare_max != 0, "nrLDPC_coding_xdma.num_threads_prepare was not provided");
+  return LDPCinit();
 }
 
-int32_t ors_nrLDPC_coding_shutdown(void)
+int32_t nrLDPC_coding_shutdown(void)
 {
-  return 0;
+  return LDPCshutdown();
 }
 
-int32_t ors_nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx)
+int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx)
 {
   int nbDecode = 0;
   for (int ULSCH_id = 0; ULSCH_id < slot_params->nb_TBs; ULSCH_id++)
@@ -294,14 +293,14 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   int Kprime = K - TB_params->F;
 
   // FPGA parameter preprocessing
-  static uint8_t multi_indata[OAI_UL_LDPC_MAX_NUM_LLR * 25 + HEADER_SIZE]; // FPGA input data
-  static uint8_t multi_outdata[1100 * 25 + HEADER_SIZE]; // FPGA output data
+  static uint8_t multi_indata[(OAI_UL_LDPC_MAX_NUM_LLR + HEADER_SIZE) * MAX_CB]; // FPGA input data
+  static uint8_t multi_outdata[(MAX_CB_SIZE_IN_BYTE_UNITS + HEADER_SIZE) * MAX_CB]; // FPGA output data
 
   //maximum possible K_b value
   int bg_len = TB_params->BG == 1 ? 22 : 10;
 
-  // Calc input CB offset
-  int input_CBoffset = TB_params->Z * Kc * 8;
+  // Calc input CB offset -- check if input is a multiple of 128, if not make it one
+  int input_CBoffset = (TB_params->Z * Kc + HEADER_SIZE) * 8; //< bytes to bits
   if ((input_CBoffset & 0x7F) == 0)
     input_CBoffset = input_CBoffset / 8;
   else
@@ -326,13 +325,15 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   dec_conf.enc_write_device = enc_write_device;
   dec_conf.dec_read_device = dec_read_device;
   dec_conf.dec_write_device = dec_write_device;
-  //Z_c * (10 or 22) is K; Calculate the number of bytes in one CB
+  //Z_c * (10 or 22) is K; Calculate the number of bits in one CB
   int out_CBoffset = dec_conf.Zc * bg_len;
+  //conv bit to byte
   if ((out_CBoffset & 0x7F) == 0)
     out_CBoffset = out_CBoffset / 8;
   else
     out_CBoffset = 16 * ((out_CBoffset / 128) + 1);
 
+  out_CBoffset += HEADER_SIZE;
 #ifdef LDPC_DATA
   printf("\n------------------------\n");
   printf("BG:\t\t%d\n", dec_conf.BG);
@@ -362,7 +363,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   //Either CRC 24 or 16
   uint8_t crc_type = crcType(TB_params->C, TB_params->A);
   int no_iteration_ldpc = 2;
-
+  
+  num_threads_prepare_max = max(num_threads_prepare_max, ldpc_threadPool->len_thr);
   uint32_t num_threads_prepare = 0;
 
   // calculate required number of jobs
@@ -382,12 +384,14 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   }
 
   args_fpga_decode_prepare_t arr[num_threads_prepare];
-  task_ans_t ans[num_threads_prepare];
-  memset(ans, 0, num_threads_prepare * sizeof(task_ans_t));
-  thread_info_tm_t t_info = {.buf = (uint8_t *)arr, .len = 0, .cap = num_threads_prepare, .ans = ans};
+  task_ans_t ans;
+  init_task_ans(&ans, num_threads_prepare);
+  thread_info_tm_t t_info = {.buf = (uint8_t *)arr, .len = 0, .cap = num_threads_prepare, .ans = &ans};
 
   // start the prepare jobs
   uint32_t r_remaining = 0;
+  uint32_t r_span = TB_params->C / num_threads_prepare;
+  uint32_t fst_span = TB_params->C / num_threads_prepare + (TB_params->C % num_threads_prepare);
   for (uint32_t r = 0; r < TB_params->C; r++) {
     nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
     if (r_remaining == 0) {
@@ -395,26 +399,21 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
 
       args_fpga_decode_prepare_t *args = &((args_fpga_decode_prepare_t *)t_info.buf)[t_info.len];
       DevAssert(t_info.len < t_info.cap);
-      args->ans = &t_info.ans[t_info.len];
+      args->ans = t_info.ans;
       t_info.len += 1;
 
       args->TB_params = TB_params;
-      args->multi_indata = &multi_indata[0] + HEADER_SIZE;
+      args->multi_indata = &multi_indata[0];
       args->no_iteration_ldpc = no_iteration_ldpc;
       args->r_first = r;
 
-      uint32_t modulus = (TB_params->C - r) % (num_threads_prepare_max - num_threads_prepare);
-      uint32_t quotient = (TB_params->C - r) / (num_threads_prepare_max - num_threads_prepare);
-      uint32_t r_span_max = modulus == 0 ? quotient : quotient + 1;
-
-      uint32_t r_span = TB_params->C - r < r_span_max ? TB_params->C - r : r_span_max;
-      args->r_span = r_span;
+      args->r_span = r == 0 ? fst_span : r_span;
       args->r_offset = r_offset;
       args->input_CBoffset = input_CBoffset;
       args->Kc = Kc;
       args->Kprime = Kprime;
 
-      r_remaining = r_span;
+      r_remaining = args->r_span;
       //De-concatenation and De-rate matching; not 100 % sure
       task_t t = {.func = &nr_ulsch_FPGA_decoding_prepare_blocks, .args = args};
       pushTpool(ldpc_threadPool, t);
@@ -456,8 +455,12 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     // --------------------- copy FPGA output ---------------------
     // ------------------------------------------------------------
     nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
-    //Why is crc check the same for all CBs? Is it the CRC check of the TB? Probably this checks just the CRC for the  first CB -> wrong needs to be fixed
-    if (check_crc(&multi_outdata[HEADER_SIZE], length_dec, crc_type)) {
+    //copy result bits need to be reversed
+    for (int i = 0; i < K / 8; i++) {
+      const uint8_t reversed = reverse_8bit(multi_outdata[i + r * out_CBoffset + HEADER_SIZE]); 
+      segment_params->c[i] = reversed;
+    }
+    if (check_crc(segment_params->c, length_dec, crc_type)) {
 #ifdef DEBUG_CRC
       LOG_I(PHY, "Segment %d CRC OK\n", r);
 #endif
@@ -468,10 +471,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
 #endif
       no_iteration_ldpc = TB_params->max_ldpc_iterations;
     }
-    //copy result
-    for (int i = 0; i < out_CBoffset; i++) {
-      segment_params->c[i] = multi_outdata[i + r * out_CBoffset + HEADER_SIZE];
-    }
+    
     segment_params->decodeSuccess = (no_iteration_ldpc < TB_params->max_ldpc_iterations);
     if (segment_params->decodeSuccess) {
       *TB_params->processedSegments = *TB_params->processedSegments + 1;
@@ -528,7 +528,7 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
     // ----------------------- FPGA pre process ------------------------
     simde__m128i ones = simde_mm_set1_epi8(255); // Generate a vector with all elements set to 255
-    simde__m128i *temp_multi_indata = (simde__m128i *)&multi_indata[r * input_CBoffset];
+    simde__m128i *temp_multi_indata = (simde__m128i *)&multi_indata[r * input_CBoffset + HEADER_SIZE];
     // -----------------------------------------------------------------
 
     // code blocks after bit selection in rate matching for LDPC code (38.212 V15.4.0 section 5.4.2.1)
@@ -559,6 +559,7 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
       LOG_E(PHY, "ulsch_decoding.c: Problem in rate_matching\n");
       no_iteration_ldpc = max_ldpc_iterations;
       arguments->no_iteration_ldpc = no_iteration_ldpc;
+      completed_task_ans(arguments->ans);
       return;
     } else {
       stop_meas(&segment_params->ts_rate_unmatch);
@@ -574,30 +575,34 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     memset((&z[0] + Kprime), 127, F * sizeof(int16_t));
     // Move coded bits before filler bits
     memcpy((&z[0] + 2 * Z), segment_params->d, (Kprime - 2 * Z) * sizeof(int16_t));
-    // skip filler bits
+    // skip filler bits, set paraity bits
     memcpy((&z[0] + K), segment_params->d + (K - 2 * Z), (Kc * Z - K) * sizeof(int16_t));
 
+    const simde__m128i max_val =  simde_mm_set1_epi8(120);
+    const simde__m128i min_val =  simde_mm_set1_epi8(-120);
+    
     // Saturate coded bits before decoding into 8 bits values
     for (int i = 0, j = 0; j < ((Kc * Z) >> 4); i += 2, j++) {
-      temp_multi_indata[j] =
-          simde_mm_xor_si128(simde_mm_packs_epi16(pv[i], pv[i + 1]),
-                             simde_mm_cmpeq_epi32(ones,
-                                                  ones)); // Perform NOT operation and write the result to temp_multi_indata[j]
+      temp_multi_indata[j] = simde_mm_packs_epi16(pv[i], pv[i + 1]);  // transform 16 bit values to 8 bit values
+      //saturate from -120 to +120
+      temp_multi_indata[j] = simde_mm_max_epi8(temp_multi_indata[j], min_val);
+      temp_multi_indata[j] = simde_mm_min_epi8(temp_multi_indata[j], max_val);
     }
 
     // the last bytes before reaching "Kc * harq_process->Z" should not be written 128 bits at a time to avoid overwritting the
     // following block in multi_indata
-    simde__m128i tmp =
-        simde_mm_xor_si128(simde_mm_packs_epi16(pv[2 * ((Kc * Z) >> 4)], pv[2 * ((Kc * Z) >> 4) + 1]),
-                           simde_mm_cmpeq_epi32(ones,
-                                                ones)); // Perform NOT operation and write the result to temp_multi_indata[j]
+    simde__m128i tmp = simde_mm_packs_epi16(pv[2 * ((Kc * Z) >> 4)], pv[2 * ((Kc * Z) >> 4) + 1]);
+    tmp = simde_mm_min_epi8(tmp, min_val);
+    tmp = simde_mm_max_epi8(tmp, max_val);
+                           
     uint8_t *tmp_p = (uint8_t *)&tmp;
     for (int i = 0, j = ((Kc * Z) & 0xfffffff0); j < Kc * Z; i++, j++) {
-      multi_indata[r * input_CBoffset + j] = tmp_p[i];
+      multi_indata[r * input_CBoffset + HEADER_SIZE + j] = tmp_p[i];
     }
 
     r_offset += segment_params->E;
   }
 
   arguments->no_iteration_ldpc = no_iteration_ldpc;
+  completed_task_ans(arguments->ans);
 }

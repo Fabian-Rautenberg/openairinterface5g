@@ -167,8 +167,9 @@ static pthread_mutex_t hw_rw_lock;
 
 int verbose = 0;
 
-void write_header_to_buffer(const ors_tx_header_t h, void* buffer)
+void write_header_to_buffer(const ors_tx_header_t h, void* buffer, const size_t CB_num, const size_t offset)
 {
+
  uint64_t tmp[2] = {0};
  tmp[0] =
     (((uint64_t)h.max_schedule & 0xF)  << 38) |
@@ -188,30 +189,36 @@ tmp[1] =
     (((uint64_t)h.magic_field & 0xFFFF) << 48) |
     (((uint64_t)h.payload_len & 0xFFFF) << 32);
 
-  memcpy(buffer, tmp, sizeof(tmp));
+  for(size_t r = 0; r < CB_num; ++r)
+  {
+    memcpy(buffer + r * offset, tmp, sizeof(tmp));
+  }
 }
 
-ors_rx_header_t read_header_from_buffer(const void* buffer)
+void read_headers_from_buffer(const void* buffer, ors_rx_header_t* headers, const size_t CB_num, const size_t offset)
 {
-  const uint64_t *w0 = (const uint64_t*)buffer;
-  const uint64_t *w1 = (const uint64_t*)(buffer + sizeof(uint64_t));
-  ors_rx_header_t ret = {};
-
-  ret.mb                 = (*w0 >> 32) & 0x3F;
-  ret.id                 = (*w0 >> 24) & 0xFF;
-  ret.toked_iter         = (*w0 >> 18) & 0x3F;
-  ret.term_on_no_change  = (*w0 >> 17) & 0x1;
-  ret.term_pass          = (*w0 >> 16) & 0x1;
-  ret.parity_check_pass  = (*w0 >> 15) & 0x1;
-  ret.hard_op_o          = (*w0 >> 14) & 0x1;
-  ret.bg                 = (*w0 >> 6)  & 0x7;
-  ret.z_set              = (*w0 >> 3)  & 0x7;
-  ret.z_j                =  *w0        & 0x7;
-
-  ret.magic_field        = (*w1 >> 48) & 0xFFFF;
-  ret.payload_len        = (*w1 >> 32) & 0xFFFF;
-
-  return ret;
+  for(size_t r = 0; r < CB_num; ++r)
+  {
+    const size_t local_offset = offset * r;
+    const uint64_t *w0 = (const uint64_t*)(buffer + local_offset);
+    const uint64_t *w1 = (const uint64_t*)(buffer + local_offset + sizeof(uint64_t));
+    ors_rx_header_t hd = {};
+  
+    hd.mb                 = (*w0 >> 32) & 0x3F;
+    hd.id                 = (*w0 >> 24) & 0xFF;
+    hd.toked_iter         = (*w0 >> 18) & 0x3F;
+    hd.term_on_no_change  = (*w0 >> 17) & 0x1;
+    hd.term_pass          = (*w0 >> 16) & 0x1;
+    hd.parity_check_pass  = (*w0 >> 15) & 0x1;
+    hd.hard_op_o          = (*w0 >> 14) & 0x1;
+    hd.bg                 = (*w0 >> 6)  & 0x7;
+    hd.z_set              = (*w0 >> 3)  & 0x7;
+    hd.z_j                =  *w0        & 0x7;
+  
+    hd.magic_field        = (*w1 >> 48) & 0xFFFF;
+    hd.payload_len        = (*w1 >> 32) & 0xFFFF;
+    headers[r] = hd;
+  }
 }
 
 uint64_t getopt_integer(char* optarg)
@@ -547,7 +554,7 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
 
   Z_val = (unsigned int)(z_a << z_j);
 
-  uint32_t OutDataNUM = Z_val * kb;
+  uint32_t OutDataNUM = Z_val * kb + HEADER_SIZE * 8;
   uint32_t Out_dwNumItems_p128;
   uint32_t Out_dwNumItems;
 
@@ -557,11 +564,9 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
   else
     Out_dwNumItems_p128 = 128 * ((OutDataNUM / 128) + 1);
 
-  Out_dwNumItems = (Out_dwNumItems_p128 * CB_num) >> 3; //< bits to bytes
+  Out_dwNumItems = Out_dwNumItems_p128 / 8; //< bits to bytes
+  size = Out_dwNumItems * CB_num; 
   
-  //payload bits + header
-  size = Out_dwNumItems + HEADER_SIZE;
-
   if (fd_dec_read < 0) {
     fprintf(stderr, "unable to open device %s, %d.\n", dev_dec_read, fd_dec_read);
     perror("open device");
@@ -570,18 +575,25 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
 
   /* read data from AXI ST into buffer using SGDMA */
   rc = read_to_buffer(dev_dec_read, fd_dec_read, DecOut, size, 0);
-
-  const ors_rx_header_t header = read_header_from_buffer(DecOut);
-  PRINT_ORS_RX_HEADER(header);
-  if(header.id != last_set_header_id)
+  ors_rx_header_t headers[MAX_CB];
+  read_headers_from_buffer(DecOut, &headers[0], CB_num, Out_dwNumItems);
+  PRINT_ORS_RX_HEADER(headers[0]);
+  size_t mx_iter = 0;
+  for(size_t r = 0; r < CB_num; ++r)
   {
-    printf("Header ID mismatch. ID should be %u got %u.\n", last_set_header_id, header.id);
-    rc = -(EINVAL);
+    if(headers[r].id != last_set_header_id)
+    {
+      printf("Header ID mismatch. ID should be %u got %u.\n", last_set_header_id, headers[r].id);
+      rc = -(EINVAL);
+      break;
+    }
+    mx_iter = mx_iter > headers[r].toked_iter ? mx_iter : headers[r].toked_iter;
+
   }
   if (rc < 0)
     goto out;
 
-  rc = header.toked_iter;
+  rc = mx_iter;
 out:
 
   return rc;
@@ -654,24 +666,17 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   }
 
   Z_val = (unsigned int)(z_a << z_j);
-
-  uint32_t InDataNUM = 0;
-  uint32_t In_dwNumItems_p128;
-  uint32_t In_dwNumItems;
-  //bytes to bits
-  InDataNUM = Z_val * (mb + kb) * 8;  //< mb (Number of parity bits) kb (number of informations bits)
+  //mb (Number of parity bits) kb (number of informations bits)
+  int CBoffset = (Z_val * (mb + kb) + HEADER_SIZE) * 8; //< bytes to bits
   //ensure input is a multiple of 128 bit or 16 byte
-  if ((InDataNUM & 0x7F) == 0)
-    In_dwNumItems_p128 = InDataNUM;
+  if ((CBoffset & 0x7F) == 0)
+    CBoffset = CBoffset / 8;
   else
-    In_dwNumItems_p128 = 128 * ((InDataNUM / 128) + 1);
+    CBoffset = 16 * ((CBoffset / 128) + 1);
 
-  //bits to bytes
-  In_dwNumItems = (In_dwNumItems_p128 * CB_num) >> 3;
-
-  size = In_dwNumItems;
+  uint32_t InDataNUM = CBoffset - HEADER_SIZE;
   //bytes to 16byte chunks
-  const uint32_t numb_of_16B_units = size / 16;
+  const uint32_t numb_of_16B_units = InDataNUM / 16;
 
   ors_tx_header_t header = {
     .max_schedule = max_schedule,
@@ -691,7 +696,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   };
   PRINT_ORS_TX_HEADER(header);
   //insert header infront of data
-  write_header_to_buffer(header, data);
+  write_header_to_buffer(header, data, CB_num, CBoffset);
 
   if (fd_dec_write < 0) {
     fprintf(stderr, "unable to open device %s, %d.\n", dev_dec_write, fd_dec_write);
@@ -699,8 +704,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     return -EINVAL;
   }
 
-  //add header to input data size
-  size += HEADER_SIZE;
+  size = CBoffset * CB_num;
   rc = write_from_buffer(dev_dec_write, fd_dec_write, data, size, 0);
   if (rc < 0)
     goto out;
@@ -966,23 +970,28 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   pthread_mutex_lock(&hw_rw_lock);
   // LDPC accelerator start
   start_hw_timer();
-  start_meas(dec_conf.dec_write_time);
+  if(dec_conf.dec_write_time != NULL)
+    start_meas(dec_conf.dec_write_time);
   // write into accelerator
   if (test_dma_dec_write((char *)buf_in, Confparam) != 0) {
     exit(1);
     printf("write exit!!\n");
   }
-  stop_meas(dec_conf.dec_write_time);
+  if(dec_conf.dec_write_time != NULL)
+    stop_meas(dec_conf.dec_write_time);
   // read output of accelerator
-  start_meas(dec_conf.dec_read_time);
+  if(dec_conf.dec_read_time != NULL)
+    start_meas(dec_conf.dec_read_time);
   const int numb_of_iter_or_err = test_dma_dec_read((char *)buf_out, Confparam);
   if (numb_of_iter_or_err < 0) {
     exit(1);
     printf("read exit!!\n");
   }
-  stop_meas(dec_conf.dec_read_time);
+  if(dec_conf.dec_read_time != NULL)
+    stop_meas(dec_conf.dec_read_time);
   const uint32_t hw_ticks = get_hw_dec_latency_ticks();
-  conv_hwtime2cputime(hw_ticks, dec_conf.hw_dec_time);
+  if(dec_conf.hw_dec_time != NULL)
+    conv_hwtime2cputime(hw_ticks, dec_conf.hw_dec_time);
   pthread_mutex_unlock(&hw_rw_lock);
 
 
