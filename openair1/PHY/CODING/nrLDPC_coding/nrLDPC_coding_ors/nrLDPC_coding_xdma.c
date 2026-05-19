@@ -456,7 +456,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     // ------------------------------------------------------------
     nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
     //copy result bits need to be reversed
-    for (int i = 0; i < K / 8; i++) {
+    const size_t cK = (K + 7) / 8;
+    for (int i = 0; i < cK; i++) {
       const uint8_t reversed = reverse_8bit(multi_outdata[i + r * out_CBoffset + HEADER_SIZE]); 
       segment_params->c[i] = reversed;
     }
