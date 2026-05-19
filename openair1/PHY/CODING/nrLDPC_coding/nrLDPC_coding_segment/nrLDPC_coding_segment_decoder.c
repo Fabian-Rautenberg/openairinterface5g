@@ -199,9 +199,16 @@ static void nr_process_decode_segment(void *arg)
   //////////////////////////////////////////////////////////////////////////////////////////
 
   ////////////////////////////////// pl =====> llrProcBuf //////////////////////////////////
+<<<<<<< HEAD
   start_meas(&rdata->ts_ldpc_decode);
   int decodeIterations = LDPCdecoder(p_decoderParms, l, (uint8_t *)llrProcBuf, p_procTime, rdata->abort_decode);
   AssertFatal(rdata->c, "rdata->c is null, A %d, K %d\n", rdata->A, rdata->K);
+=======
+
+  //calculate the true number of parity bits. Depending on rvidx and clear flag 
+  int decodeIterations = LDPCdecoder(p_decoderParms, l, llrProcBuf, p_procTime, rdata->abort_decode);
+
+>>>>>>> 65c621fe92 (Added the possibility to offload 25 CBs at a time)
   if (decodeIterations < p_decoderParms->numMaxIter) {
     memcpy(rdata->c, llrProcBuf, K >> 3);
     *rdata->decodeSuccess = true;
@@ -279,8 +286,7 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
     reset_meas(&rdata->ts_ldpc_decode);
     task_t t = {.func = &nr_process_decode_segment, .args = rdata};
     pushTpool(nrLDPC_slot_decoding_parameters->threadPool, t);
-
-    LOG_D(PHY, "Added a block to decode, in pipe: %d, rdata->c %p\n", r, rdata->c);
+    LOG_D(PHY, "Added a block to decode, in pipe: %d\n", r);
   }
   return nrLDPC_TB_decoding_parameters->C;
 }
