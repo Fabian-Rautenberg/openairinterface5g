@@ -593,8 +593,8 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     // the last bytes before reaching "Kc * harq_process->Z" should not be written 128 bits at a time to avoid overwritting the
     // following block in multi_indata
     simde__m128i tmp = simde_mm_packs_epi16(pv[2 * ((Kc * Z) >> 4)], pv[2 * ((Kc * Z) >> 4) + 1]);
-    tmp = simde_mm_min_epi8(tmp, min_val);
-    tmp = simde_mm_max_epi8(tmp, max_val);
+    tmp = simde_mm_max_epi8(tmp, min_val);
+    tmp = simde_mm_min_epi8(tmp, max_val);
                            
     uint8_t *tmp_p = (uint8_t *)&tmp;
     for (int i = 0, j = ((Kc * Z) & 0xfffffff0); j < Kc * Z; i++, j++) {
