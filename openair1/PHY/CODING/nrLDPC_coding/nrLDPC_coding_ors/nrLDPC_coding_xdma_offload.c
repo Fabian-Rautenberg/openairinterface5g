@@ -191,6 +191,9 @@ tmp[1] =
 
   for(size_t r = 0; r < CB_num; ++r)
   {
+    tmp[0] &= ~(((uint64_t)0xFFU) << 24); //reset ID field
+    //set header ID
+    tmp[0] |= (((uint64_t)(h.id + r) & 0xFF) << 24);
     memcpy(buffer + r * offset, tmp, sizeof(tmp));
   }
 }
@@ -581,9 +584,10 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
   size_t mx_iter = 0;
   for(size_t r = 0; r < CB_num; ++r)
   {
-    if(headers[r].id != last_set_header_id)
+    const uint16_t previous_set_id = (last_set_header_id + r) % 256; 
+    if(headers[r].id != previous_set_id)
     {
-      printf("Header ID mismatch. ID should be %u got %u.\n", last_set_header_id, headers[r].id);
+      printf("Header ID mismatch. ID should be %u got %u.\n", previous_set_id, headers[r].id);
       rc = -(EINVAL);
       break;
     }
@@ -619,7 +623,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   max_schedule = 0;
   mb = Confparam.mb;
   id = last_set_header_id = id_c;
-  id_c = (id_c + 1) % 256;
+  id_c = (id_c + CB_num) % 256;
   bg = Confparam.BGSel - 1;
   z_set = Confparam.z_set - 1;
   z_j = Confparam.z_j;
