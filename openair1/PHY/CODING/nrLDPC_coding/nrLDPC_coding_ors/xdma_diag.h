@@ -53,6 +53,7 @@ typedef struct {
   unsigned char z_j; // z_j = 6;
   unsigned char max_iter; // max_iter = 8;
   unsigned char SetIdx; // sc_idx = 12;
+  const uint32_t* numb_of_parity_bits_per_cb;
 } DecIPConf;
 
 typedef struct {
