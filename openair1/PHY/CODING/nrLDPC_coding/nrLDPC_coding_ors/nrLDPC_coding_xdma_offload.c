@@ -167,34 +167,32 @@ static pthread_mutex_t hw_rw_lock;
 
 int verbose = 0;
 
-void write_header_to_buffer(const ors_tx_header_t h, void* buffer, const size_t CB_num, const size_t offset)
+void write_header_to_buffer(const ors_tx_header_t* hs, void* buffer, const size_t CB_num, const uint32_t* offsets)
 {
-
- uint64_t tmp[2] = {0};
- tmp[0] =
-    (((uint64_t)h.max_schedule & 0xF)  << 38) |
-    (((uint64_t)h.mb           & 0x3F) << 32) |
-    (((uint64_t)h.id           & 0xFF) << 24) |
-    (((uint64_t)h.max_iter     & 0x3F) << 18) |
-    (((uint64_t)h.term_on_no_change & 0x1) << 17) |
-    (((uint64_t)h.term_on_pass      & 0x1) << 16) |
-    (((uint64_t)h.include_parity_op & 0x1) << 15) |
-    (((uint64_t)h.hard_op_o         & 0x1) << 14) |
-    (((uint64_t)h.sc_idx       & 0xF)  << 9)  |
-    (((uint64_t)h.bg           & 0x7)  << 6)  |
-    (((uint64_t)h.z_set        & 0x7)  << 3)  |
-    (((uint64_t)h.z_j          & 0x7));
-
-tmp[1] =
-    (((uint64_t)h.magic_field & 0xFFFF) << 48) |
-    (((uint64_t)h.payload_len & 0xFFFF) << 32);
-
+  uint64_t tmp[2] = {0};
+  //TODO optimize
   for(size_t r = 0; r < CB_num; ++r)
   {
-    tmp[0] &= ~(((uint64_t)0xFFU) << 24); //reset ID field
-    //set header ID
-    tmp[0] |= (((uint64_t)(h.id + r) & 0xFF) << 24);
-    memcpy(buffer + r * offset, tmp, sizeof(tmp));
+    tmp[0] =
+       (((uint64_t)hs[r].max_schedule & 0xF)  << 38) |
+       (((uint64_t)hs[r].mb              & 0x3F) << 32) |
+       (((uint64_t)hs[r].id           & 0xFF) << 24) |
+       (((uint64_t)hs[r].max_iter     & 0x3F) << 18) |
+       (((uint64_t)hs[r].term_on_no_change & 0x1) << 17) |
+       (((uint64_t)hs[r].term_on_pass      & 0x1) << 16) |
+       (((uint64_t)hs[r].include_parity_op & 0x1) << 15) |
+       (((uint64_t)hs[r].hard_op_o         & 0x1) << 14) |
+       (((uint64_t)hs[r].sc_idx       & 0xF)  << 9)  |
+       (((uint64_t)hs[r].bg           & 0x7)  << 6)  |
+       (((uint64_t)hs[r].z_set        & 0x7)  << 3)  |
+       (((uint64_t)hs[r].z_j          & 0x7));
+   
+   tmp[1] =
+       (((uint64_t)hs[r].magic_field & 0xFFFF) << 48) |
+       (((uint64_t)hs[r].payload_len & 0xFFFF) << 32);
+    
+    memcpy(buffer + offsets[r], tmp, sizeof(tmp));
+    memset(tmp, 0, sizeof(tmp));
   }
 }
 
@@ -611,17 +609,16 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
 
   void* virt_addr;
 
-  uint64_t size;
+  uint64_t size = 0;
   uint32_t writeval;
 
   uint32_t Z_val;
-  uint16_t max_schedule, mb, id, bg, z_j, kb, z_a, max_iter, sc_idx;
+  uint16_t max_schedule, id, bg, z_j, kb, z_a, max_iter, sc_idx;
   uint16_t z_set;
   uint32_t CB_num = Confparam.CB_num; // CB_PROCESS_NUMBER_Dec;//
 
   // this values should be given by Shane
   max_schedule = 0;
-  mb = Confparam.mb;
   id = last_set_header_id = id_c;
   id_c = (id_c + CB_num) % 256;
   bg = Confparam.BGSel - 1;
@@ -670,37 +667,42 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   }
 
   Z_val = (unsigned int)(z_a << z_j);
-  //mb (Number of parity bits) kb (number of informations bits)
-  int CBoffset = (Z_val * (mb + kb) + HEADER_SIZE) * 8; //< bytes to bits
-  //ensure input is a multiple of 128 bit or 16 byte
-  if ((CBoffset & 0x7F) == 0)
-    CBoffset = CBoffset / 8;
-  else
-    CBoffset = 16 * ((CBoffset / 128) + 1);
-
-  uint32_t InDataNUM = CBoffset - HEADER_SIZE;
-  //bytes to 16byte chunks
-  const uint32_t numb_of_16B_units = InDataNUM / 16;
-
-  ors_tx_header_t header = {
-    .max_schedule = max_schedule,
-    .mb = mb,     
-    .id = id,
-    .max_iter = max_iter,
-    .term_on_no_change = 1,
-    .term_on_pass = 1,
-    .include_parity_op = 0,
-    .hard_op_o = 1,
-    .sc_idx = sc_idx,
-    .bg = bg,
-    .z_set = z_set,
-    .z_j = z_j,
-    .magic_field = ORS_MAGIC,
-    .payload_len = numb_of_16B_units //< payload size in 16 Byte units
-  };
-  PRINT_ORS_TX_HEADER(header);
+  ors_tx_header_t headers[MAX_CB] = {}; 
+  uint32_t offsets[MAX_CB] = {};
+  for(uint32_t r = 0; r < CB_num; ++r)
+  {
+    const uint8_t mb = Confparam.numb_of_parity_bits_per_cb[r] / Z_val;
+    //kb (number of informations bits)
+    size_t local_size = HEADER_SIZE + kb * Z_val + Confparam.numb_of_parity_bits_per_cb[r];
+    //bytes to bits
+    local_size *= 8;
+    if ((local_size & 0x7F) == 0)
+      local_size = local_size / 8;
+    else
+      local_size = 16 * ((local_size / 128) + 1);
+    offsets[r] = size;  
+    size += local_size;
+    const size_t numb_of_16B_units = (local_size - HEADER_SIZE) / 16; //< header isn't part of data
+    headers[r].max_schedule = max_schedule;
+    headers[r].mb = mb;
+    headers[r].id = id;
+    headers[r].max_iter = max_iter;
+    headers[r].term_on_no_change = 1;
+    headers[r].term_on_pass = 1;
+    headers[r].include_parity_op = 0;
+    headers[r].hard_op_o = 1;
+    headers[r].sc_idx = sc_idx;
+    headers[r].bg = bg;
+    headers[r].z_set = z_set;
+    headers[r].z_j = z_j;
+    headers[r].magic_field = ORS_MAGIC;
+    headers[r].payload_len = numb_of_16B_units; //< payload size in 16 Byte units
+    PRINT_ORS_TX_HEADER(headers[r]);
+    id++;
+  }
+  //from bytes to 16 byte units
   //insert header infront of data
-  write_header_to_buffer(header, data, CB_num, CBoffset);
+  write_header_to_buffer(headers, data, CB_num, offsets);
 
   if (fd_dec_write < 0) {
     fprintf(stderr, "unable to open device %s, %d.\n", dev_dec_write, fd_dec_write);
@@ -708,7 +710,6 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     return -EINVAL;
   }
 
-  size = CBoffset * CB_num;
   rc = write_from_buffer(dev_dec_write, fd_dec_write, data, size, 0);
   if (rc < 0)
     goto out;
@@ -801,6 +802,7 @@ int32_t test_dma_init(devices_t devices)
   AssertFatal(map_base != (void*)-1, "MEMORY MAP AT ADDRESS %p FAILED\n", map_base);
 
   *(volatile uint32_t*)(map_base + OFFSET_RESET) |= (1 << 8);
+  usleep(10);
   *(volatile uint32_t*)(map_base + OFFSET_RESET) &= ~(1 << 8);
 
   cpu_freq_GHz = get_cpu_freq_GHz();
@@ -907,7 +909,11 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   int baseGraph;
   int CB_num;
 
-  DecIPConf Confparam = {.max_iter = dec_conf.max_iter, .SetIdx = dec_conf.SetIdx};
+  DecIPConf Confparam = {
+    .max_iter = dec_conf.max_iter, 
+    .SetIdx = dec_conf.SetIdx, 
+    .numb_of_parity_bits_per_cb = dec_conf.numb_of_parity_bits_per_CB
+  };
   int z_a, z_tmp;
   int z_j = 0;
 

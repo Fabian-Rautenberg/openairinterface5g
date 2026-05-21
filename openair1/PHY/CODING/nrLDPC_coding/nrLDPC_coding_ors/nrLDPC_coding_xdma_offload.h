@@ -41,6 +41,7 @@ typedef struct {
   int nRows;
   int numChannelLls;
   int numFillerBits;
+  uint32_t numb_of_parity_bits_per_CB[MAX_CB];
   time_stats_t* dec_write_time;
   time_stats_t* dec_read_time;
   time_stats_t* hw_dec_time;

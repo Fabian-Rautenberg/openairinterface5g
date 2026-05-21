@@ -30,6 +30,7 @@
 #else
 #define PRINT_CRC_CHECK(a)
 #endif
+#define USE_PARITY_OPTIMIZATION (true)
 
 
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_interface.h"
@@ -72,6 +73,10 @@ int32_t ors_nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params
 // int32_t nrLDPC_coding_encoder(void);
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool);
 void nr_ulsch_FPGA_decoding_prepare_blocks(void *args);
+
+static size_t get_number_of_parity_bits(const bool d_to_clear, const uint32_t E, const uint32_t Z, const uint32_t Kprime, const uint8_t BG, const bool padded);
+static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F);
+static size_t get_Z_padding(const size_t nbits, const uint32_t Z);
 
 /**
  * To support segment decoding as well, the following function has to be implemented.
@@ -285,26 +290,22 @@ int32_t nrLDPC_coding_encoder(void)
 
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool)
 {
+  DevAssert(TB_params->C <= MAX_CB);
   const uint32_t K = TB_params->K;
   //numb of columns in the BG (52 for BG2 and 68 for BG1) -> number of coded words
   const int Kc = TB_params->BG == 2 ? 52 : 68;
   int r_offset = 0, offset = 0;
   //number of true information bits; could also include CRC of CB
   int Kprime = K - TB_params->F;
-
   // FPGA parameter preprocessing
+  //TODO: ensure buffer size is a multiple of 16/32 Byte
   static uint8_t multi_indata[(OAI_UL_LDPC_MAX_NUM_LLR + HEADER_SIZE) * MAX_CB]; // FPGA input data
   static uint8_t multi_outdata[(MAX_CB_SIZE_IN_BYTE_UNITS + HEADER_SIZE) * MAX_CB]; // FPGA output data
 
   //maximum possible K_b value
   int bg_len = TB_params->BG == 1 ? 22 : 10;
 
-  // Calc input CB offset -- check if input is a multiple of 128, if not make it one
-  int input_CBoffset = (TB_params->Z * Kc + HEADER_SIZE) * 8; //< bytes to bits
-  if ((input_CBoffset & 0x7F) == 0)
-    input_CBoffset = input_CBoffset / 8;
-  else
-    input_CBoffset = 16 * ((input_CBoffset / 128) + 1);
+  int input_CBoffset = 0;
 
   DecIFConf dec_conf = {0};
   dec_conf.Zc = TB_params->Z;
@@ -364,19 +365,22 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   uint8_t crc_type = crcType(TB_params->C, TB_params->A);
   int no_iteration_ldpc = 2;
   
+  //TODO: remove num_threads_prepare_max
   num_threads_prepare_max = max(num_threads_prepare_max, ldpc_threadPool->len_thr);
   uint32_t num_threads_prepare = 0;
-
-  // calculate required number of jobs
+  //TODO store rspan for later use
+  //calculate required number of jobs
   uint32_t r_while = 0;
   while (r_while < TB_params->C) {
     // calculate number of segments processed in the new job
-    uint32_t modulus = (TB_params->C - r_while) % (num_threads_prepare_max - num_threads_prepare);
-    uint32_t quotient = (TB_params->C - r_while) / (num_threads_prepare_max - num_threads_prepare);
+    const uint32_t r_rem = TB_params->C - r_while;
+    const uint32_t t_rem = num_threads_prepare_max - num_threads_prepare;
+    uint32_t modulus = r_rem % t_rem;
+    uint32_t quotient = r_rem / t_rem;
     uint32_t r_span_max = modulus == 0 ? quotient : quotient + 1;
 
     // saturate to be sure to not go above C
-    uint32_t r_span = TB_params->C - r_while < r_span_max ? TB_params->C - r_while : r_span_max;
+    uint32_t r_span = min(r_rem, r_span_max);
 
     // increment
     num_threads_prepare++;
@@ -406,7 +410,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
       args->multi_indata = &multi_indata[0];
       args->no_iteration_ldpc = no_iteration_ldpc;
       args->r_first = r;
-
+      //TODO: Use previous calculated r_span
       args->r_span = r == 0 ? fst_span : r_span;
       args->r_offset = r_offset;
       args->input_CBoffset = input_CBoffset;
@@ -414,6 +418,12 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
       args->Kprime = Kprime;
 
       r_remaining = args->r_span;
+      //add offset before starting threads, because d_to_be_cleared can be reseted in threads
+      for(size_t rr = r; rr < (r + args->r_span); ++rr)
+      {
+        input_CBoffset += get_CB_offset(*TB_params->segments[rr].d_to_be_cleared, TB_params->Z, Kc, TB_params->segments[rr].E, TB_params->F);
+        dec_conf.numb_of_parity_bits_per_CB[rr] = get_number_of_parity_bits(*TB_params->segments[rr].d_to_be_cleared, TB_params->segments[rr].E, TB_params->Z, Kprime, TB_params->BG, true);
+      }
       //De-concatenation and De-rate matching; not 100 % sure
       task_t t = {.func = &nr_ulsch_FPGA_decoding_prepare_blocks, .args = args};
       pushTpool(ldpc_threadPool, t);
@@ -421,10 +431,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
       LOG_D(PHY, "Added %d block(s) to prepare for decoding, in pipe: %d to %d\n", r_span, r, r + r_span - 1);
     }
     r_offset += segment_params->E;
-    offset += ((K >> 3) - (TB_params->F >> 3) - ((TB_params->C > 1) ? 3 : 0));
     r_remaining -= 1;
   }
-
   // reset offset in order to properly fill the output array later
   offset = 0;
 
@@ -432,7 +440,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
 
   // wait for the prepare jobs to complete. meaning all CBs are ready for decoding
   join_task_ans(t_info.ans);
-
+  //TODO delete
   for (uint32_t job = 0; job < num_threads_prepare; job++) {
     args_fpga_decode_prepare_t *args = &arr[job];
     if (args->no_iteration_ldpc >= TB_params->max_ldpc_iterations)
@@ -482,6 +490,52 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   return 0;
 }
 
+static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F)
+{
+  uint32_t offset = 0;
+  if(d_to_clear && USE_PARITY_OPTIMIZATION)
+  {
+    //partial parity bits are sent to HW
+    const size_t nbits = E + F + 2 * Z;
+    const size_t padding = get_Z_padding(nbits, Z); //inorder to make parity bits a multiple of Z 
+    offset = padding + nbits + HEADER_SIZE; 
+  }
+  else
+  {
+    offset = Z * Kc + HEADER_SIZE; 
+  }
+  //TODO: Refactor code
+  offset *= 8; //bytes to bits
+  if ((offset & 0x7F) == 0)
+    offset = offset / 8;
+  else
+    offset = 16 * ((offset / 128) + 1);
+  return offset;
+}
+
+static size_t get_Z_padding(const size_t nbits, const uint32_t Z)
+{
+  return (Z - (nbits % Z)) % Z;
+}
+
+static size_t get_number_of_parity_bits(const bool d_to_clear, const uint32_t E, const uint32_t Z, const uint32_t Kprime, const uint8_t BG, const bool padded)
+{
+  size_t numb_of_parity_bits = 0;
+  if(d_to_clear && USE_PARITY_OPTIMIZATION)
+  {
+    numb_of_parity_bits = E - (Kprime - 2 * Z);
+    const size_t padding = get_Z_padding(numb_of_parity_bits, Z);
+    //make numb of parity bits a multiple of Z
+    numb_of_parity_bits += padded * padding;
+  }
+  else
+  {
+    numb_of_parity_bits = BG == 1 ? 46 * Z : 42 * Z;
+  }
+  return numb_of_parity_bits;
+}
+
+
 /*!
  * \fn nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
  * \brief prepare blocks for LDPC decoding on FPGA
@@ -523,13 +577,12 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
 
   int16_t z[68 * 384 + 16] __attribute__((aligned(16)));
   simde__m128i *pv = (simde__m128i *)&z;
-
   // the function processes r_span blocks starting from block at index r_first in ulsch_llr
   for (uint32_t r = r_first; r < (r_first + r_span); r++) {
     nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
+    const size_t offset = get_CB_offset(*segment_params->d_to_be_cleared, Z, Kc, segment_params->E, F);
     // ----------------------- FPGA pre process ------------------------
-    simde__m128i ones = simde_mm_set1_epi8(255); // Generate a vector with all elements set to 255
-    simde__m128i *temp_multi_indata = (simde__m128i *)&multi_indata[r * input_CBoffset + HEADER_SIZE];
+    simde__m128i *temp_multi_indata = (simde__m128i *)&multi_indata[input_CBoffset + HEADER_SIZE];
     // -----------------------------------------------------------------
 
     // code blocks after bit selection in rate matching for LDPC code (38.212 V15.4.0 section 5.4.2.1)
@@ -544,6 +597,7 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     // dematching
     // -------------------------------------------------------------------------------------------
     start_meas(&segment_params->ts_rate_unmatch);
+    //Check, if this error occurs 
     if (nr_rate_matching_ldpc_rx(tbslbrm,
                                  BG,
                                  Z,
@@ -566,8 +620,6 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
       stop_meas(&segment_params->ts_rate_unmatch);
     }
 
-    *segment_params->d_to_be_cleared = false;
-
     memset(segment_params->c, 0, K >> 3);
 
     // set first 2*Z_c bits to zeros; are these the punctured bits?
@@ -581,9 +633,16 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
 
     const simde__m128i max_val =  simde_mm_set1_epi8(120);
     const simde__m128i min_val =  simde_mm_set1_epi8(-120);
-    
+    //TODO: Make numb_to_copy a multiple of 16 
+    size_t numb_to_copy = Kc * Z;
+    if(*segment_params->d_to_be_cleared && USE_PARITY_OPTIMIZATION)
+    {
+      numb_to_copy = 2 * Z + segment_params->E + F;
+      numb_to_copy += get_Z_padding(numb_to_copy, Z);
+    } 
+
     // Saturate coded bits before decoding into 8 bits values
-    for (int i = 0, j = 0; j < ((Kc * Z) >> 4); i += 2, j++) {
+    for (int i = 0, j = 0; j < ((numb_to_copy) >> 4); i += 2, j++) {
       temp_multi_indata[j] = simde_mm_packs_epi16(pv[i], pv[i + 1]);  // transform 16 bit values to 8 bit values
       //saturate from -120 to +120
       temp_multi_indata[j] = simde_mm_max_epi8(temp_multi_indata[j], min_val);
@@ -592,16 +651,18 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
 
     // the last bytes before reaching "Kc * harq_process->Z" should not be written 128 bits at a time to avoid overwritting the
     // following block in multi_indata
-    simde__m128i tmp = simde_mm_packs_epi16(pv[2 * ((Kc * Z) >> 4)], pv[2 * ((Kc * Z) >> 4) + 1]);
+    simde__m128i tmp = simde_mm_packs_epi16(pv[2 * ((numb_to_copy) >> 4)], pv[2 * ((numb_to_copy) >> 4) + 1]);
     tmp = simde_mm_max_epi8(tmp, min_val);
     tmp = simde_mm_min_epi8(tmp, max_val);
                            
     uint8_t *tmp_p = (uint8_t *)&tmp;
-    for (int i = 0, j = ((Kc * Z) & 0xfffffff0); j < Kc * Z; i++, j++) {
-      multi_indata[r * input_CBoffset + HEADER_SIZE + j] = tmp_p[i];
+    for (int i = 0, j = ((numb_to_copy) & 0xfffffff0); j < numb_to_copy; i++, j++) {
+      multi_indata[input_CBoffset + HEADER_SIZE + j] = tmp_p[i];
     }
 
     r_offset += segment_params->E;
+    *segment_params->d_to_be_cleared = false;
+    input_CBoffset += offset;
   }
 
   arguments->no_iteration_ldpc = no_iteration_ldpc;
