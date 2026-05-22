@@ -31,6 +31,7 @@
 #define PRINT_CRC_CHECK(a)
 #endif
 #define USE_PARITY_OPTIMIZATION (true)
+#define USE_OUTPUT_PARALLELIZATION (false)
 
 
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_interface.h"
@@ -67,12 +68,26 @@ typedef struct args_fpga_decode_prepare_s {
   task_ans_t *ans; /*!< pointer to the answer that is used by thread pool to detect job completion */
 } args_fpga_decode_prepare_t;
 
+typedef struct args_fpga_post_decode_s {
+  nrLDPC_TB_decoding_parameters_t *TB_params; /*!< transport blocks parameters */
+
+  uint32_t r_first; /*!< index of the first block to be prepared within this function */
+  uint32_t r_span; /*!< number of blocks to be prepared within this function */
+  int output_CBoffset; /*!< */
+  uint8_t *multi_outdata; /*!< pointer to the head of the block destination array that is received from FPGA decoding */
+  int K;
+  int length_dec;
+  uint8_t crc_type;
+  task_ans_t *ans; /*!< pointer to the answer that is used by thread pool to detect job completion */
+} args_fpga_post_decode_t;
+
 int32_t ors_nrLDPC_coding_init(void);
 int32_t ors_nrLDPC_coding_shutdown(void);
 int32_t ors_nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx);
 // int32_t nrLDPC_coding_encoder(void);
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool);
 void nr_ulsch_FPGA_decoding_prepare_blocks(void *args);
+void nr_ulsch_FPGA_post_decoding(void *args);
 
 static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint32_t E, const uint32_t Z, const uint32_t Kprime, const uint8_t BG, const bool padded);
 static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F);
@@ -442,37 +457,39 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   //==================================================================
   start_meas(&TB_params->segments[0].ts_ldpc_decode);
   nrLDPC_decoder_FPGA_PYM(&multi_indata[0], &multi_outdata[0], dec_conf);
-  // printf("Xilinx FPGA -> CB = %d\n", harq_process->C);
   stop_meas(&TB_params->segments[0].ts_ldpc_decode);
 
+  //Copy to external buffer using the threadpool
+  init_task_ans(&ans, arr_size);
+  args_fpga_post_decode_t post_decode_args[MAX_CB];
+  for (uint32_t r = 0; r < TB_params->C; /*r+=r_span*/) 
+  {
+    const uint32_t r_span = r_spans[r];
+    post_decode_args[r].ans = &ans;
+    post_decode_args[r].r_first = r;
+    post_decode_args[r].crc_type = crc_type;
+    post_decode_args[r].length_dec = length_dec;
+    post_decode_args[r].K = K;
+    post_decode_args[r].r_span = r_span;
+    post_decode_args[r].TB_params = TB_params;
+    post_decode_args[r].output_CBoffset = out_CBoffset;
+    post_decode_args[r].multi_outdata = &multi_outdata[0];
+    task_t t = {.func = &nr_ulsch_FPGA_post_decoding, .args = &post_decode_args[r]};
+    #if USE_OUTPUT_PARALLELIZATION
+    pushTpool(ldpc_threadPool, t);
+    #else
+    tpool_t tmp_pool = {.len_thr = 0};  
+    pushTpool(&tmp_pool, t);
+    #endif
+    r += r_span;
+  }
+  //wait for threads to be completed
+  join_task_ans(&ans);
+  //calculate the number of processed segments
   *TB_params->processedSegments = 0;
-  for (uint32_t r = 0; r < TB_params->C; r++) {
-    // ------------------------------------------------------------
-    // --------------------- copy FPGA output ---------------------
-    // ------------------------------------------------------------
-    nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
-    //copy result bits need to be reversed
-    const size_t cK = (K + 7) / 8;
-    const size_t numb_of_16B_units = cK / 16;
-    simde__m128i* ptr = (simde__m128i *)&multi_outdata[r * out_CBoffset + HEADER_SIZE]; 
-    simde__m128i* out_ptr = (simde__m128i *)&segment_params->c[0];
-    for (int i = 0; i < numb_of_16B_units; i++)
-    {
-      const simde__m128i reversed16B = reverse_bits_8x16(&ptr[i]);
-      out_ptr[i] = reversed16B;
-      //legacy reversing
-      //segment_params->c[i] = reverse_8bit(multi_outdata[i + r * out_CBoffset + HEADER_SIZE]);
-    }
-    //copy and reserving remaining bytes
-    const uint32_t rem = cK % 16;
-    for(int i = cK - rem; i < cK; ++i)
-    {
-      const uint8_t reversed = reverse_8bit(multi_outdata[i + r * out_CBoffset + HEADER_SIZE]); 
-      segment_params->c[i] = reversed;
-    }
-    const bool crc_successful = check_crc(segment_params->c, length_dec, crc_type);  
-    segment_params->decodeSuccess = crc_successful; 
-    *TB_params->processedSegments += crc_successful;
+  for(uint32_t r = 0; r < TB_params->C; ++r)
+  {
+    *TB_params->processedSegments += TB_params->segments[r].decodeSuccess;
   }
 
   return 0;
@@ -544,6 +561,39 @@ static inline simde__m128i reverse_bits_8x16(simde__m128i* x) {
   );
 }
 
+void nr_ulsch_FPGA_post_decoding(void *args)
+{
+  args_fpga_post_decode_t *arguments = (args_fpga_post_decode_t *)args;
+  const uint32_t r_end = arguments->r_first + arguments->r_span;
+  const int K = arguments->K;
+  for (uint32_t r = arguments->r_first; r < r_end; r++) 
+  {
+    nrLDPC_segment_decoding_parameters_t *segment_params = &arguments->TB_params->segments[r];
+    //copy result bits need to be reversed
+    const size_t cK = (K + 7) / 8;
+    const size_t numb_of_16B_units = cK / 16;
+    const uint8_t* CB_out_ptr = &arguments->multi_outdata[r * arguments->output_CBoffset + HEADER_SIZE];
+    const simde__m128i* ptr = (const simde__m128i *)CB_out_ptr; 
+    simde__m128i* out_ptr = (simde__m128i *)&segment_params->c[0];
+    for (int i = 0; i < numb_of_16B_units; i++)
+    {
+      const simde__m128i reversed16B = reverse_bits_8x16(&ptr[i]);
+      out_ptr[i] = reversed16B;
+      //legacy reversing
+      //segment_params->c[i] = reverse_8bit(multi_outdata[i + r * out_CBoffset + HEADER_SIZE]);
+    }
+    //copy and reserving remaining bytes
+    const uint32_t rem = cK % 16;
+    for(int i = cK - rem; i < cK; ++i)
+    {
+      const uint8_t reversed = reverse_8bit(CB_out_ptr[i]); 
+      segment_params->c[i] = reversed;
+    }
+    const bool crc_successful = check_crc(segment_params->c, arguments->length_dec, arguments->crc_type);  
+    segment_params->decodeSuccess = crc_successful; 
+  }
+  completed_task_ans(arguments->ans);
+}
 
 /*!
  * \fn nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
