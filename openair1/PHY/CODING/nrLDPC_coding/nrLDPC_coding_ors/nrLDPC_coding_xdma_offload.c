@@ -503,27 +503,18 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
 {
   ssize_t rc;
 
-  void* virt_addr;
-
   uint64_t size;
-  uint32_t writeval;
 
   uint32_t Z_val;
 
-  uint16_t max_schedule, mb, id, bg, z_j, kb, z_a, max_iter, sc_idx;
+  uint16_t bg, z_j, kb, z_a;
   uint16_t z_set;
-  uint32_t ctrl_data;
   uint32_t CB_num = Confparam.CB_num;
 
   // this values should be given by Shane
-  max_schedule = 0;
-  mb = Confparam.mb;
-  id = CB_num;
   bg = Confparam.BGSel - 1;
   z_set = Confparam.z_set - 1;
   z_j = Confparam.z_j;
-  max_iter = 8;
-  sc_idx = 12;
 
   if (z_set == 0)
     z_a = 2;
@@ -555,17 +546,11 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
 
   Z_val = (unsigned int)(z_a << z_j);
 
-  uint32_t OutDataNUM = Z_val * kb + HEADER_SIZE * 8;
-  uint32_t Out_dwNumItems_p128;
-  uint32_t Out_dwNumItems;
+  const uint32_t OutDataNUM = Z_val * kb + HEADER_SIZE * 8;
+  const uint32_t Out_dwNumItems_p128 = CEIL_UP(OutDataNUM, 128);
+  //bits to bytes
+  const uint32_t Out_dwNumItems = Out_dwNumItems_p128 / 8;
 
-  //check if bit size is a multiple of 128 bit, if not make it to the next closest
-  if ((OutDataNUM & 0x7F) == 0)
-    Out_dwNumItems_p128 = OutDataNUM;
-  else
-    Out_dwNumItems_p128 = 128 * ((OutDataNUM / 128) + 1);
-
-  Out_dwNumItems = Out_dwNumItems_p128 / 8; //< bits to bytes
   size = Out_dwNumItems * CB_num; 
   
   if (fd_dec_read < 0) {
@@ -607,10 +592,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
   static uint16_t id_c = 0;
   ssize_t rc;
 
-  void* virt_addr;
-
   uint64_t size = 0;
-  uint32_t writeval;
 
   uint32_t Z_val;
   uint16_t max_schedule, id, bg, z_j, kb, z_a, max_iter, sc_idx;
@@ -674,12 +656,8 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     const uint8_t mb = Confparam.numb_of_parity_bits_per_cb[r] / Z_val;
     //kb (number of informations bits)
     size_t local_size = HEADER_SIZE + kb * Z_val + Confparam.numb_of_parity_bits_per_cb[r];
-    //bytes to bits
-    local_size *= 8;
-    if ((local_size & 0x7F) == 0)
-      local_size = local_size / 8;
-    else
-      local_size = 16 * ((local_size / 128) + 1);
+    //ceil up to a multiple of 16B
+    local_size = CEIL_UP_16B(local_size);
     offsets[r] = size;  
     size += local_size;
     const size_t numb_of_16B_units = (local_size - HEADER_SIZE) / 16; //< header isn't part of data
@@ -723,7 +701,7 @@ out:
 
 void init_hw_timer()
 {
-  volatile uint32_t* base_hw_addr =  ((uint8_t*)map_base) + OFFSET_AXI_TIMER;
+  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
   for(uint32_t i = 0; i < 2; ++i)
   {
     base_hw_addr[i * 4 + 1] = 0;
@@ -738,7 +716,7 @@ void init_hw_timer()
 
 void start_hw_timer()
 {
-  volatile uint32_t* base_hw_addr =  ((uint8_t*)map_base) + OFFSET_AXI_TIMER;
+  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
   for(uint32_t i = 0; i < 2; ++i)
   {
     base_hw_addr[i * 4] &= ~(1U << 7);
@@ -752,7 +730,7 @@ void start_hw_timer()
 
 uint32_t get_hw_dec_latency_ticks()
 {
-  volatile uint32_t* base_hw_addr =  ((uint8_t*)map_base) + OFFSET_AXI_TIMER;
+  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
   const uint32_t end = base_hw_addr[5];
   const uint32_t start = base_hw_addr[1];
   return end - start;
@@ -917,20 +895,8 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   int z_a, z_tmp;
   int z_j = 0;
 
-
-  int input_CBoffset, output_CBoffset;
-
   uint8_t i_LS;
 
-  devices_t devices = {
-    .user_device = dec_conf.user_device,
-    .enc_write_device = dec_conf.enc_write_device,
-    .enc_read_device = dec_conf.enc_read_device,
-    .dec_write_device = dec_conf.dec_write_device,
-    .dec_read_device = dec_conf.dec_read_device
-  };
-
-  
   // LDPC input parameter
   Zc = dec_conf.Zc; // shifting size
   nRows = dec_conf.nRows; // number of Rows

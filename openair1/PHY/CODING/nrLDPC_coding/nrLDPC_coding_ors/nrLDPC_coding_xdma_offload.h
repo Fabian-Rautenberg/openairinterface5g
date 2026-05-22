@@ -20,6 +20,9 @@
 #define DEVICE_NAME_DEFAULT_DEC_WRITE "/dev/xdma0_h2c_0"
 #define HEADER_SIZE (16U)
 #define MAX_CB (25U)
+#define GET_PADDING(X, M) (((M) - ((X) % (M))) % (M))
+#define CEIL_UP(X, M) ((X) + (GET_PADDING(X, M)))
+#define CEIL_UP_16B(X) CEIL_UP(X, 16)
 
 /**
     \brief LDPC input parameter
