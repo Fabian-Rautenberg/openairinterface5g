@@ -40,6 +40,11 @@
 #include "PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h"
 
 #include "xdma_diag.h"
+#if DO_INTERNAL_TIME_MEASUREMENT
+#include "common/utils/var_array.h"
+#include "SIMULATION/LTE_PHY/common_sim.h"
+#endif
+
 
 // Global var to limit the rework of the dirty legacy code
 int num_threads_prepare_max = 0;
@@ -59,18 +64,21 @@ typedef struct internal_time_stats_s {
   time_stats_t ts_rate_dematching_time;
 
   time_stats_t ts_total_decoding_time;
+  time_stats_t ts_h2c_latency;
   time_stats_t ts_c2h_time;
   time_stats_t ts_h2c_time;
   time_stats_t ts_hw_dec_latency; //< valid to last
+  
+  time_stats_t total_process_tb_time;
+
   bool valid;
   size_t numb_of_decoder_iter;
 } internal_time_stats_t;
-#define NUMB_OF_TOTAL_TIME_POINTS (5000U) //< assuming SNR step size 0.2, SNR range is 10 -> 10/0.2 = 50
+#define NUMB_OF_TOTAL_TIME_POINTS (100U) //< assuming SNR step size 0.2, SNR range is 10 -> 10/0.2 = 50
 #define NUMB_OF_MAX_RETRANSMISSION (4U)
 #define NUMBER_OF_TRIALS_PER_SNR (100U)
 static internal_time_stats_t internal_time_stats[NUMB_OF_TOTAL_TIME_POINTS][NUMB_OF_MAX_RETRANSMISSION];
 static uint32_t timer_idx = 0;
-static const char* timer_out_file = "internal_timing_stats.txt";
 //Time measurements declaration end
 #endif
 
@@ -323,7 +331,7 @@ int32_t nrLDPC_coding_shutdown(void)
   //Output internal timestats to file
   for(size_t i = 0; i < NUMB_OF_TOTAL_TIME_POINTS; ++i)
   {
-    printf("Total measurement IDX %u:\n", i);
+    printf("Total measurement IDX %lu:\n", i);
     bool do_break = false;
     for(size_t j = 0; j < NUMB_OF_MAX_RETRANSMISSION; ++j)
     {
@@ -332,18 +340,22 @@ int32_t nrLDPC_coding_shutdown(void)
         do_break = true;
         break;
       }
-      printf("\tRetransmission idx: %u\n", j);
-      printf("Number of LDPC decoder iteration done: %u\n", internal_time_stats[i][j].numb_of_decoder_iter);
-      print_meas(&internal_time_stats[i][j].ts_c2h_time, "C2H transfer time for all CBs", NULL, NULL);
-      print_meas(&internal_time_stats[i][j].ts_h2c_time, "H2C transfer time for all CBs", NULL, NULL);
-      print_meas(&internal_time_stats[i][j].ts_total_decoding_time, "Total decoding time for all CBs", NULL, NULL);
-      print_meas(&internal_time_stats[i][j].ts_rate_dematching_time, "Rate dematching per CB", NULL, NULL);
-      print_meas(&internal_time_stats[i][j].ts_deinterleaving_time, "Deinterleaving per CB", NULL, NULL);
-      print_meas(&internal_time_stats[i][j].ts_hw_dec_latency, "HW dec latency (valid to last) for all CBs", NULL, NULL);
-      print_meas(&internal_time_stats[i][j].ts_prepare_copying_time, "Prepare copying time per CB", NULL, NULL);
-      print_meas(&internal_time_stats[i][j].ts_total_decoding_post_time, "Post decoding time for all CBs", NULL, NULL);
-      print_meas(&internal_time_stats[i][j].ts_total_decoding_prepare_time, "Total prepare time for all CBs", NULL, NULL);
+      printf("--------------------------------------------------------------------------------------------\n");
+      printf("Retransmission idx: %lu\n", j);
+      printf("Number of LDPC decoder iteration done: %lu\n", internal_time_stats[i][j].numb_of_decoder_iter);
+      printStatIndent(&internal_time_stats[i][j].total_process_tb_time, "Total TB process time");
+      printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_time, "Total decoding time for all CBs");
+      printStatIndent3(&internal_time_stats[i][j].ts_c2h_time, "C2H transfer time for all CBs");
+      printStatIndent3(&internal_time_stats[i][j].ts_h2c_time, "H2C transfer time for all CBs");
+      printStatIndent3(&internal_time_stats[i][j].ts_h2c_latency, "H2C latency");
+      printStatIndent3(&internal_time_stats[i][j].ts_hw_dec_latency, "HW dec latency (valid to last) for all CBs");
+      printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_prepare_time, "Total prepare time for all CBs");
+      printStatIndent3(&internal_time_stats[i][j].ts_deinterleaving_time, "Deinterleaving per CB");
+      printStatIndent3(&internal_time_stats[i][j].ts_rate_dematching_time, "Rate dematching per CB");
+      printStatIndent3(&internal_time_stats[i][j].ts_prepare_copying_time, "Prepare copying time per CB");
+      printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_post_time, "Post decoding time for all CBs");
     }
+    printf("*********************************************************************************************\n");
     if(do_break)
       break;
   }
@@ -378,9 +390,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   // FPGA parameter preprocessing
   #define MAX_INPUT_FPGA_SIZE CEIL_UP_16B((OAI_UL_LDPC_MAX_NUM_LLR + HEADER_SIZE) * MAX_CB)
   #define MAX_OUTPUT_FPGA_SIZE CEIL_UP_16B((MAX_CB_SIZE_IN_BYTE_UNITS + HEADER_SIZE) * MAX_CB)
-  static uint8_t multi_indata[MAX_INPUT_FPGA_SIZE] __attribute__((aligned(16))); // FPGA input data
-  static uint8_t multi_outdata[MAX_OUTPUT_FPGA_SIZE] __attribute__((aligned(16))); // FPGA output data
-
+  static uint8_t multi_indata[MAX_INPUT_FPGA_SIZE] __attribute__((aligned(PAGE_SIZE))); // FPGA input data
+  static uint8_t multi_outdata[MAX_OUTPUT_FPGA_SIZE] __attribute__((aligned(PAGE_SIZE))); // FPGA output data
   //maximum possible K_b value
   int bg_len = TB_params->BG == 1 ? 22 : 10;
 
@@ -389,14 +400,16 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   DecIFConf dec_conf = {0};
 #if DO_INTERNAL_TIME_MEASUREMENT
   //setup timer stuff
-  static local_trial_cntr = 0;
+  static uint32_t local_trial_cntr = 0;
   const uint32_t current_timer_idx = timer_idx;
   const uint32_t current_retransmission_idx = TB_params->rv_index;
   internal_time_stats_t* current_time_stat = &internal_time_stats[current_timer_idx][current_retransmission_idx];
+  start_meas(&current_time_stat->total_process_tb_time);
   current_time_stat->valid = true;
   dec_conf.dec_write_time = &current_time_stat->ts_h2c_time;
   dec_conf.dec_read_time  = &current_time_stat->ts_c2h_time;
   dec_conf.hw_dec_time    = &current_time_stat->ts_hw_dec_latency;
+  dec_conf.h2c_latency    = &current_time_stat->ts_h2c_latency;
   time_stats_t prepare_copying_time[MAX_CB] = {};
   local_trial_cntr += TB_params->rv_index == 0; //< assuming first transmission starts with rv_index 0 and it isn't repeated anymore
   if(local_trial_cntr == NUMBER_OF_TRIALS_PER_SNR)
@@ -593,7 +606,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   {
     *TB_params->processedSegments += TB_params->segments[r].decodeSuccess;
   }
-
+  stop_meas(&current_time_stat->total_process_tb_time);
   return 0;
 }
 
