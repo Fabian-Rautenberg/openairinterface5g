@@ -32,7 +32,7 @@
 #endif
 #define USE_PARITY_OPTIMIZATION (true)
 #define USE_OUTPUT_PARALLELIZATION (false)
-
+#define DO_INTERNAL_TIME_MEASUREMENT (true)
 
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_interface.h"
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_nr_interface.h"
@@ -48,6 +48,32 @@ char *enc_read_device = NULL;
 char *enc_write_device = NULL;
 char *dec_read_device = NULL;
 char *dec_write_device = NULL;
+#if DO_INTERNAL_TIME_MEASUREMENT
+//Time measurements declaration begin
+typedef struct internal_time_stats_s {
+  time_stats_t ts_total_decoding_prepare_time;
+  time_stats_t ts_prepare_copying_time;
+  time_stats_t ts_total_decoding_post_time;
+
+  time_stats_t ts_deinterleaving_time;
+  time_stats_t ts_rate_dematching_time;
+
+  time_stats_t ts_total_decoding_time;
+  time_stats_t ts_c2h_time;
+  time_stats_t ts_h2c_time;
+  time_stats_t ts_hw_dec_latency; //< valid to last
+  bool valid;
+  size_t numb_of_decoder_iter;
+} internal_time_stats_t;
+#define NUMB_OF_TOTAL_TIME_POINTS (5000U) //< assuming SNR step size 0.2, SNR range is 10 -> 10/0.2 = 50
+#define NUMB_OF_MAX_RETRANSMISSION (4U)
+#define NUMBER_OF_TRIALS_PER_SNR (100U)
+static internal_time_stats_t internal_time_stats[NUMB_OF_TOTAL_TIME_POINTS][NUMB_OF_MAX_RETRANSMISSION];
+static uint32_t timer_idx = 0;
+static const char* timer_out_file = "internal_timing_stats.txt";
+//Time measurements declaration end
+#endif
+
 
 /*!
  * \typedef args_fpga_decode_prepare_t
@@ -66,6 +92,9 @@ typedef struct args_fpga_decode_prepare_s {
   int Kc; /*!< ratio between the number of columns in the parity check graph and the lifting size */
   int Kprime; /*!< size of payload and CRC bits in a code block */
   task_ans_t *ans; /*!< pointer to the answer that is used by thread pool to detect job completion */
+#if DO_INTERNAL_TIME_MEASUREMENT
+  time_stats_t* ts_copying_to_FPGA_buff;/*!< time needed to copy to FPGA buff */
+#endif
 } args_fpga_decode_prepare_t;
 
 typedef struct args_fpga_post_decode_s {
@@ -81,9 +110,9 @@ typedef struct args_fpga_post_decode_s {
   task_ans_t *ans; /*!< pointer to the answer that is used by thread pool to detect job completion */
 } args_fpga_post_decode_t;
 
-int32_t ors_nrLDPC_coding_init(void);
-int32_t ors_nrLDPC_coding_shutdown(void);
-int32_t ors_nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx);
+int32_t nrLDPC_coding_init(void);
+int32_t nrLDPC_coding_shutdown(void);
+int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, int frame_rx, int slot_rx);
 // int32_t nrLDPC_coding_encoder(void);
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool);
 void nr_ulsch_FPGA_decoding_prepare_blocks(void *args);
@@ -281,11 +310,44 @@ int32_t nrLDPC_coding_init(void)
       {"dec_write_device", NULL, 0, .strptr = &dec_write_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_WRITE, TYPE_STRING, 0, NULL}};
   //config_get(config_get_if(), LoaderParams, sizeofArray(LoaderParams), "nrLDPC_coding_xdma");
   //AssertFatal(num_threads_prepare_max != 0, "nrLDPC_coding_xdma.num_threads_prepare was not provided");
+#if DO_INTERNAL_TIME_MEASUREMENT  
+  memset(&internal_time_stats[0][0], 0, sizeof(internal_time_stats));
+  timer_idx = 0;
+#endif
   return LDPCinit();
 }
 
 int32_t nrLDPC_coding_shutdown(void)
 {
+#if DO_INTERNAL_TIME_MEASUREMENT
+  //Output internal timestats to file
+  for(size_t i = 0; i < NUMB_OF_TOTAL_TIME_POINTS; ++i)
+  {
+    printf("Total measurement IDX %u:\n", i);
+    bool do_break = false;
+    for(size_t j = 0; j < NUMB_OF_MAX_RETRANSMISSION; ++j)
+    {
+      if(!internal_time_stats[i][j].valid)
+      {
+        do_break = true;
+        break;
+      }
+      printf("\tRetransmission idx: %u\n", j);
+      printf("Number of LDPC decoder iteration done: %u\n", internal_time_stats[i][j].numb_of_decoder_iter);
+      print_meas(&internal_time_stats[i][j].ts_c2h_time, "C2H transfer time for all CBs", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_h2c_time, "H2C transfer time for all CBs", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_total_decoding_time, "Total decoding time for all CBs", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_rate_dematching_time, "Rate dematching per CB", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_deinterleaving_time, "Deinterleaving per CB", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_hw_dec_latency, "HW dec latency (valid to last) for all CBs", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_prepare_copying_time, "Prepare copying time per CB", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_total_decoding_post_time, "Post decoding time for all CBs", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_total_decoding_prepare_time, "Total prepare time for all CBs", NULL, NULL);
+    }
+    if(do_break)
+      break;
+  }
+#endif
   return LDPCshutdown();
 }
 
@@ -325,6 +387,24 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   int input_CBoffset = 0;
 
   DecIFConf dec_conf = {0};
+#if DO_INTERNAL_TIME_MEASUREMENT
+  //setup timer stuff
+  static local_trial_cntr = 0;
+  const uint32_t current_timer_idx = timer_idx;
+  const uint32_t current_retransmission_idx = TB_params->rv_index;
+  internal_time_stats_t* current_time_stat = &internal_time_stats[current_timer_idx][current_retransmission_idx];
+  current_time_stat->valid = true;
+  dec_conf.dec_write_time = &current_time_stat->ts_h2c_time;
+  dec_conf.dec_read_time  = &current_time_stat->ts_c2h_time;
+  dec_conf.hw_dec_time    = &current_time_stat->ts_hw_dec_latency;
+  time_stats_t prepare_copying_time[MAX_CB] = {};
+  local_trial_cntr += TB_params->rv_index == 0; //< assuming first transmission starts with rv_index 0 and it isn't repeated anymore
+  if(local_trial_cntr == NUMBER_OF_TRIALS_PER_SNR)
+  {
+    local_trial_cntr = 0;
+    timer_idx++;
+  } 
+#endif
   dec_conf.Zc = TB_params->Z;
   dec_conf.BG = TB_params->BG;
   dec_conf.max_iter = TB_params->max_ldpc_iterations;
@@ -373,9 +453,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   // ===================================
 #endif
   //K' = ((A+L)+C*L)/C (TODO: cross check it with their Kprime value)
-  int length_dec = lenWithCrc(TB_params->C, TB_params->A);
+  const int length_dec = lenWithCrc(TB_params->C, TB_params->A);
   //Either CRC 24 or 16
-  uint8_t crc_type = crcType(TB_params->C, TB_params->A);
+  const uint8_t crc_type = crcType(TB_params->C, TB_params->A);
   int no_iteration_ldpc = 2;
   
   num_threads_prepare_max = ldpc_threadPool->len_thr;
@@ -411,7 +491,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   task_ans_t ans;
   init_task_ans(&ans, arr_size);
   thread_info_tm_t t_info = {.buf = (uint8_t *)arr, .len = 0, .cap = arr_size, .ans = &ans};
-
+#if DO_INTERNAL_TIME_MEASUREMENT
+  start_meas(&current_time_stat->ts_total_decoding_prepare_time);
+#endif
   // start the prepare jobs
   for (uint32_t r = 0; r < TB_params->C; /*r+=r_span*/) {
     args_fpga_decode_prepare_t *args = &((args_fpga_decode_prepare_t *)t_info.buf)[t_info.len];
@@ -429,6 +511,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     args->input_CBoffset = input_CBoffset;
     args->Kc = Kc;
     args->Kprime = Kprime;
+#if DO_INTERNAL_TIME_MEASUREMENT
+    args->ts_copying_to_FPGA_buff = &prepare_copying_time[0];
+#endif
 
     //add offset before starting threads, because d_to_be_cleared can be reseted in threads
     for(size_t current_r = r; current_r < (r + r_span); ++current_r)
@@ -438,7 +523,6 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
       dec_conf.numb_of_parity_bits_per_CB[current_r] = get_number_of_parity_bits(*segment_params->d_to_be_cleared, segment_params->E, TB_params->Z, Kprime, TB_params->BG, true);
       r_offset += segment_params->E;
     }
-    //De-concatenation and De-rate matching; not 100 % sure
     task_t t = {.func = &nr_ulsch_FPGA_decoding_prepare_blocks, .args = args};
     pushTpool(ldpc_threadPool, t);
     r += r_span;
@@ -449,19 +533,33 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
 
   // wait for the prepare jobs to complete. meaning all CBs are ready for decoding
   join_task_ans(t_info.ans);
-
+#if DO_INTERNAL_TIME_MEASUREMENT
+  stop_meas(&current_time_stat->ts_total_decoding_prepare_time);
+  for(uint32_t r = 0; r < TB_params->C; r++)
+  {
+    merge_meas(&current_time_stat->ts_prepare_copying_time, &prepare_copying_time[r]);
+    merge_meas(&current_time_stat->ts_rate_dematching_time, &TB_params->segments[r].ts_rate_unmatch);
+    merge_meas(&current_time_stat->ts_deinterleaving_time, &TB_params->segments[r].ts_deinterleave);
+  }
+#endif
   // launch decode with FPGA
   LOG_I(PHY, "Run the LDPC ------[FPGA version]------\n");
   //==================================================================
   //  Xilinx FPGA LDPC decoding function -> nrLDPC_decoder_FPGA_PYM()
   //==================================================================
   start_meas(&TB_params->segments[0].ts_ldpc_decode);
-  nrLDPC_decoder_FPGA_PYM(&multi_indata[0], &multi_outdata[0], dec_conf);
+  const int numb_of_iter = nrLDPC_decoder_FPGA_PYM(&multi_indata[0], &multi_outdata[0], dec_conf);
   stop_meas(&TB_params->segments[0].ts_ldpc_decode);
-
+#if DO_INTERNAL_TIME_MEASUREMENT
+  merge_meas(&current_time_stat->ts_total_decoding_time, &TB_params->segments[0].ts_ldpc_decode);
+  current_time_stat->numb_of_decoder_iter = numb_of_iter;
+#endif
   //Copy to external buffer using the threadpool
   init_task_ans(&ans, arr_size);
   args_fpga_post_decode_t post_decode_args[MAX_CB];
+#if DO_INTERNAL_TIME_MEASUREMENT
+  start_meas(&current_time_stat->ts_total_decoding_post_time);
+#endif
   for (uint32_t r = 0; r < TB_params->C; /*r+=r_span*/) 
   {
     const uint32_t r_span = r_spans[r];
@@ -485,6 +583,10 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   }
   //wait for threads to be completed
   join_task_ans(&ans);
+#if DO_INTERNAL_TIME_MEASUREMENT
+  stop_meas(&current_time_stat->ts_total_decoding_post_time);
+#endif
+
   //calculate the number of processed segments
   *TB_params->processedSegments = 0;
   for(uint32_t r = 0; r < TB_params->C; ++r)
@@ -700,7 +802,9 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
       numb_to_copy += get_Z_padding(numb_to_copy, Z);
     }
     numb_to_copy = CEIL_UP_16B(numb_to_copy); 
-
+#if DO_INTERNAL_TIME_MEASUREMENT
+    start_meas(&arguments->ts_copying_to_FPGA_buff[r]);
+#endif
     // Saturate coded bits before decoding into 8 bits values
     for (int i = 0, j = 0; j < ((numb_to_copy) >> 4); i += 2, j++) {
       temp_multi_indata[j] = simde_mm_packs_epi16(pv[i], pv[i + 1]);  // transform 16 bit values to 8 bit values
@@ -708,7 +812,9 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
       temp_multi_indata[j] = simde_mm_max_epi8(temp_multi_indata[j], min_val);
       temp_multi_indata[j] = simde_mm_min_epi8(temp_multi_indata[j], max_val);
     }
-
+#if DO_INTERNAL_TIME_MEASUREMENT
+    stop_meas(&arguments->ts_copying_to_FPGA_buff[r]);
+#endif
     r_offset += segment_params->E;
     *segment_params->d_to_be_cleared = false;
     input_CBoffset += offset;
