@@ -64,6 +64,7 @@
 #include "nrLDPC_coding_xdma_offload.h"
 
 #include "common/utils/assertions.h"
+#include "common/utils/nr/nr_common.h"
 
 typedef unsigned long long U64;
 void* map_base;
@@ -76,7 +77,6 @@ char allocated_write[24 * 1024] __attribute__((aligned(4096)));
 char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));
 double cpu_freq_GHz;
 
-static uint16_t last_set_header_id = 0;
 static pthread_mutex_t hw_rw_lock;
 
 // dma_from_device.c
@@ -567,7 +567,7 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
   size_t mx_iter = 0;
   for(size_t r = 0; r < CB_num; ++r)
   {
-    const uint16_t previous_set_id = (last_set_header_id + r) % 256; 
+    const uint16_t previous_set_id = max((CB_num - 1) - r, 255); 
     if(headers[r].id != previous_set_id)
     {
       printf("Header ID mismatch. ID should be %u got %u.\n", previous_set_id, headers[r].id);
@@ -589,7 +589,6 @@ out:
 // int test_dma_dec_write(unsigned int *data, DecIPConf Confparam)
 int test_dma_dec_write(char* data, DecIPConf Confparam)
 {
-  static uint16_t id_c = 0;
   ssize_t rc;
 
   uint64_t size = 0;
@@ -601,8 +600,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
 
   // this values should be given by Shane
   max_schedule = 0;
-  id = last_set_header_id = id_c;
-  id_c = (id_c + CB_num) % 256;
+  id = CB_num - 1;
   bg = Confparam.BGSel - 1;
   z_set = Confparam.z_set - 1;
   z_j = Confparam.z_j;
@@ -663,7 +661,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     const size_t numb_of_16B_units = (local_size - HEADER_SIZE) / 16; //< header isn't part of data
     headers[r].max_schedule = max_schedule;
     headers[r].mb = mb;
-    headers[r].id = id;
+    headers[r].id = max(255, id);
     headers[r].max_iter = max_iter;
     headers[r].term_on_no_change = 1;
     headers[r].term_on_pass = 1;
@@ -676,7 +674,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     headers[r].magic_field = ORS_MAGIC;
     headers[r].payload_len = numb_of_16B_units; //< payload size in 16 Byte units
     PRINT_ORS_TX_HEADER(headers[r]);
-    id++;
+    id--;
   }
   //from bytes to 16 byte units
   //insert header infront of data
