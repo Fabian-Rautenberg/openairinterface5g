@@ -709,6 +709,10 @@ void init_hw_timer()
     base_hw_addr[i * 4] &= ~(1U << 4);
     base_hw_addr[i * 4] |= (1U << 5);
     base_hw_addr[i * 4] &= ~(1U << 5);
+    if(i == 1)
+    {
+      base_hw_addr[i * 4] |= (1 << 4);
+    }
   }
 }
 
