@@ -730,11 +730,17 @@ void start_hw_timer()
   base_hw_addr[0] |= (1 << 10);
 }
 
+uint32_t get_hw_valid_ticks()
+{
+  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
+  return base_hw_addr[1];
+}
+
 uint32_t get_hw_dec_latency_ticks()
 {
   volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
   const uint32_t end = base_hw_addr[5];
-  const uint32_t start = base_hw_addr[1];
+  const uint32_t start = get_hw_valid_ticks();
   return end - start;
 }
 
@@ -970,6 +976,11 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   const uint32_t hw_ticks = get_hw_dec_latency_ticks();
   if(dec_conf.hw_dec_time != NULL)
     conv_hwtime2cputime(hw_ticks, dec_conf.hw_dec_time);
+  if(dec_conf.h2c_latency != NULL)
+  {
+    const uint32_t time_to_valid_ticks = get_hw_valid_ticks(); 
+    conv_hwtime2cputime(time_to_valid_ticks, dec_conf.h2c_latency);
+  }
   pthread_mutex_unlock(&hw_rw_lock);
 
 

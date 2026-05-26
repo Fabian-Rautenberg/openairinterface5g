@@ -48,6 +48,7 @@ typedef struct {
   time_stats_t* dec_write_time;
   time_stats_t* dec_read_time;
   time_stats_t* hw_dec_time;
+  time_stats_t* h2c_latency;
 } DecIFConf;
 
 int nrLDPC_decoder_FPGA_PYM(uint8_t *buf_in, uint8_t *buf_out, DecIFConf dec_conf);
