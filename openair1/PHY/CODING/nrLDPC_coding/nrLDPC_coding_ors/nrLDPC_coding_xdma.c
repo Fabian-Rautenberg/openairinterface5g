@@ -33,6 +33,8 @@
 #define USE_PARITY_OPTIMIZATION (true)
 #define USE_OUTPUT_PARALLELIZATION (false)
 #define DO_INTERNAL_TIME_MEASUREMENT (true)
+#define USE_EXACT_BG (true)  
+
 
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_interface.h"
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_nr_interface.h"
@@ -104,6 +106,7 @@ typedef struct args_fpga_decode_prepare_s {
   int input_CBoffset; /*!< */
   int Kc; /*!< ratio between the number of columns in the parity check graph and the lifting size */
   int Kprime; /*!< size of payload and CRC bits in a code block */
+  int Kb;
   task_ans_t *ans; /*!< pointer to the answer that is used by thread pool to detect job completion */
 #if DO_INTERNAL_TIME_MEASUREMENT
   time_stats_t* ts_copying_to_FPGA_buff;/*!< time needed to copy to FPGA buff */
@@ -189,7 +192,6 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   }
   else //second BG
   {
-    #define USE_EXACT_BG (true)  
     #if USE_EXACT_BG 
     //The following has to be valid K_b * Z_c >= K'
     if(6 * p_decParams->Z >= p_decParams->Kprime)
@@ -408,7 +410,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   const int Kc = TB_params->BG == 2 ? 52 : 68;
   int r_offset = 0;
   //number of true information bits; could also include CRC of CB
-  int Kprime = K - TB_params->F;
+  const int Kprime = K - TB_params->F;
   // FPGA parameter preprocessing
   #define MAX_INPUT_FPGA_SIZE CEIL_UP_16B((OAI_UL_LDPC_MAX_NUM_LLR + HEADER_SIZE) * MAX_CB)
   #define MAX_OUTPUT_FPGA_SIZE CEIL_UP_16B((MAX_CB_SIZE_IN_BYTE_UNITS + HEADER_SIZE) * MAX_CB)
@@ -445,7 +447,41 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   CBs4MS = TB_params->C;
 #endif
   dec_conf.Zc = TB_params->Z;
-  dec_conf.BG = TB_params->BG;
+  int Kb = 0;
+  if(TB_params->BG == 1)
+  {
+    Kb = 22;
+    dec_conf.BG = 1;
+  }
+  else //second BG
+  {
+#if USE_EXACT_BG 
+    //The following has to be valid K_b * Z_c >= K'
+    if(6 * TB_params->Z >= Kprime)
+    {
+      Kb = 6;
+      dec_conf.BG = 5;
+    }
+    else if(8 * TB_params->Z >= Kprime)
+    {
+      Kb = 8;
+      dec_conf.BG = 4;
+    }
+    else if(9 * TB_params->Z >= Kprime)
+    {
+      Kb = 9;
+      dec_conf.BG = 3;
+    }
+    else // 10 * Z_c >= K'
+    {
+      Kb = 10;
+      dec_conf.BG = 2;
+    }
+#else
+    Kb = 10;
+    dec_conf.BG = 2;
+#endif 
+  }
   dec_conf.max_iter = TB_params->max_ldpc_iterations;
   dec_conf.numCB = TB_params->C;
   // input soft bits length, Zc x 66 - length of filler bits
@@ -550,6 +586,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     args->input_CBoffset = input_CBoffset;
     args->Kc = Kc;
     args->Kprime = Kprime;
+    args->Kb = Kb;
 #if DO_INTERNAL_TIME_MEASUREMENT
     args->ts_copying_to_FPGA_buff = &prepare_copying_time[0];
 #endif
@@ -777,7 +814,10 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
   int input_CBoffset = arguments->input_CBoffset;
   int Kc = arguments->Kc;
   int Kprime = arguments->Kprime;
-
+  const int Kb = arguments->Kb;
+  const int KbZ = Kb * Z;
+  //Filler bits regarding Kb value
+  const int FF = KbZ - Kprime;
   int16_t z[68 * 384 + 16] __attribute__((aligned(16)));
   simde__m128i *pv = (simde__m128i *)&z;
   // the function processes r_span blocks starting from block at index r_first in ulsch_llr
@@ -828,19 +868,19 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     // set first 2*Z_c bits to zeros; are these the punctured bits?
     memset(&z[0], 0, 2 * Z * sizeof(int16_t));
     // set Filler bits
-    memset((&z[0] + Kprime), 127, F * sizeof(int16_t));
+    memset((&z[0] + Kprime), 120, FF * sizeof(int16_t));
     // Move coded bits before filler bits
     memcpy((&z[0] + 2 * Z), segment_params->d, (Kprime - 2 * Z) * sizeof(int16_t));
+    const uint32_t numb_of_parity_bits = Kc * Z - K;
     // skip filler bits, set paraity bits
-    memcpy((&z[0] + K), segment_params->d + (K - 2 * Z), (Kc * Z - K) * sizeof(int16_t));
+    memcpy((&z[0] + KbZ), segment_params->d + (K - 2 * Z), numb_of_parity_bits * sizeof(int16_t));
 
     const simde__m128i max_val =  simde_mm_set1_epi8(120);
     const simde__m128i min_val =  simde_mm_set1_epi8(-120);
-    //TODO: Make numb_to_copy a multiple of 16 
-    size_t numb_to_copy = Kc * Z;
+    size_t numb_to_copy = KbZ + numb_of_parity_bits;
     if(*segment_params->d_to_be_cleared && USE_PARITY_OPTIMIZATION)
     {
-      numb_to_copy = 2 * Z + segment_params->E + F;
+      numb_to_copy = 2 * Z + segment_params->E + FF;
       numb_to_copy += get_Z_padding(numb_to_copy, Z);
     }
     numb_to_copy = CEIL_UP_16B(numb_to_copy); 
