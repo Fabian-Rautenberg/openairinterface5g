@@ -73,12 +73,17 @@ typedef struct internal_time_stats_s {
 
   bool valid;
   size_t numb_of_decoder_iter;
+  uint32_t coderate;
 } internal_time_stats_t;
 #define NUMB_OF_TOTAL_TIME_POINTS (100U) //< assuming SNR step size 0.2, SNR range is 10 -> 10/0.2 = 50
 #define NUMB_OF_MAX_RETRANSMISSION (4U)
 #define NUMBER_OF_TRIALS_PER_SNR (100U)
 static internal_time_stats_t internal_time_stats[NUMB_OF_TOTAL_TIME_POINTS][NUMB_OF_MAX_RETRANSMISSION];
 static uint32_t timer_idx = 0;
+static uint32_t K4MS = 0; 
+static uint32_t Qm4MS = 0;
+static uint32_t MCS4MS= 0;
+static uint32_t CBs4MS = 0;
 //Time measurements declaration end
 #endif
 
@@ -328,37 +333,54 @@ int32_t nrLDPC_coding_init(void)
 int32_t nrLDPC_coding_shutdown(void)
 {
 #if DO_INTERNAL_TIME_MEASUREMENT
+  varArray_t* vr = initVarArray(1, sizeof(double));
+  *((double*)dataArray(vr)) = 0;
+  vr->size++;
+  printf("K %u, Qm: %u, MCS: %u, CBs: %u\n", K4MS, Qm4MS, MCS4MS, CBs4MS);
   //Output internal timestats to file
   for(size_t i = 0; i < NUMB_OF_TOTAL_TIME_POINTS; ++i)
   {
     printf("Total measurement IDX %lu:\n", i);
-    bool do_break = false;
+    int invalid_cnt = 0;
     for(size_t j = 0; j < NUMB_OF_MAX_RETRANSMISSION; ++j)
     {
       if(!internal_time_stats[i][j].valid)
       {
-        do_break = true;
-        break;
+        invalid_cnt++;
+        continue;
       }
       printf("--------------------------------------------------------------------------------------------\n");
       printf("Retransmission idx: %lu\n", j);
       printf("Number of LDPC decoder iteration done: %lu\n", internal_time_stats[i][j].numb_of_decoder_iter);
+      printf("Code rate: %lu\n", internal_time_stats[i][j].coderate);
       printStatIndent(&internal_time_stats[i][j].total_process_tb_time, "Total TB process time");
+      printDistribution(&internal_time_stats[i][j].total_process_tb_time, vr, "Total TB process time distribution");
       printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_time, "Total decoding time for all CBs");
+      printDistribution(&internal_time_stats[i][j].ts_total_decoding_time, vr, "Total decoding time for all CBs distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_c2h_time, "C2H transfer time for all CBs");
+      printDistribution(&internal_time_stats[i][j].ts_c2h_time, vr, "C2H transfer time for all CBs distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_h2c_time, "H2C transfer time for all CBs");
+      printDistribution(&internal_time_stats[i][j].ts_h2c_time, vr, "H2C transfer time for all CBs distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_h2c_latency, "H2C latency");
+      printDistribution(&internal_time_stats[i][j].ts_h2c_latency, vr, "H2C latency distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_hw_dec_latency, "HW dec latency (valid to last) for all CBs");
+      printDistribution(&internal_time_stats[i][j].ts_hw_dec_latency, vr, "HW dec latency (valid to last) for all CBs distribution");
       printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_prepare_time, "Total prepare time for all CBs");
+      printDistribution(&internal_time_stats[i][j].ts_total_decoding_prepare_time, vr, "Total prepare time for all CBs distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_deinterleaving_time, "Deinterleaving per CB");
+      printDistribution(&internal_time_stats[i][j].ts_deinterleaving_time, vr, "Deinterleaving per CB distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_rate_dematching_time, "Rate dematching per CB");
+      printDistribution(&internal_time_stats[i][j].ts_rate_dematching_time, vr, "Rate dematching per CB distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_prepare_copying_time, "Prepare copying time per CB");
+      printDistribution(&internal_time_stats[i][j].ts_prepare_copying_time, vr, "Prepare copying time per CB distribution");
       printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_post_time, "Post decoding time for all CBs");
+      printDistribution(&internal_time_stats[i][j].ts_total_decoding_post_time, vr, "Post decoding time for all CBs distribution");
     }
     printf("*********************************************************************************************\n");
-    if(do_break)
+    if(invalid_cnt == NUMB_OF_MAX_RETRANSMISSION)
       break;
   }
+  free(vr);
 #endif
   return LDPCshutdown();
 }
@@ -416,7 +438,11 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   {
     local_trial_cntr = 0;
     timer_idx++;
-  } 
+  }
+  K4MS = K;
+  Qm4MS = TB_params->Qm;
+  MCS4MS = TB_params->mcs;
+  CBs4MS = TB_params->C;
 #endif
   dec_conf.Zc = TB_params->Z;
   dec_conf.BG = TB_params->BG;
@@ -553,6 +579,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     merge_meas(&current_time_stat->ts_prepare_copying_time, &prepare_copying_time[r]);
     merge_meas(&current_time_stat->ts_rate_dematching_time, &TB_params->segments[r].ts_rate_unmatch);
     merge_meas(&current_time_stat->ts_deinterleaving_time, &TB_params->segments[r].ts_deinterleave);
+    current_time_stat->coderate = TB_params->segments[r].R;
   }
 #endif
   // launch decode with FPGA
@@ -606,7 +633,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   {
     *TB_params->processedSegments += TB_params->segments[r].decodeSuccess;
   }
+#if DO_INTERNAL_TIME_MEASUREMENT
   stop_meas(&current_time_stat->total_process_tb_time);
+#endif 
   return 0;
 }
 
