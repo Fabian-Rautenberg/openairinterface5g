@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include "time_meas.h"
+#include "PHY/CODING/nrLDPC_decoder/nrLDPCdecoder_defs.h"
 
 #define DEVICE_NAME_DEFAULT_USER "/dev/xdma0_user"
 #define DEVICE_NAME_DEFAULT_ENC_READ "/dev/xdma0_c2h_1"
@@ -19,7 +20,7 @@
 #define DEVICE_NAME_DEFAULT_DEC_READ "/dev/xdma0_c2h_0"
 #define DEVICE_NAME_DEFAULT_DEC_WRITE "/dev/xdma0_h2c_0"
 #define HEADER_SIZE (16U)
-#define MAX_CB (25U)
+#define MAX_CB (NR_LDPC_MAX_NUM_CB)
 #define GET_PADDING(X, M) (((M) - ((X) % (M))) % (M))
 #define CEIL_UP(X, M) ((X) + (GET_PADDING(X, M)))
 #define CEIL_UP_16B(X) CEIL_UP(X, 16)
