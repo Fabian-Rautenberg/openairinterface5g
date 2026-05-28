@@ -32,7 +32,7 @@
 #endif
 #define USE_PARITY_OPTIMIZATION (true)
 #define USE_OUTPUT_PARALLELIZATION (false)
-#define DO_INTERNAL_TIME_MEASUREMENT (true)
+#define DO_INTERNAL_TIME_MEASUREMENT (false)
 #define USE_EXACT_BG (true)  
 
 
