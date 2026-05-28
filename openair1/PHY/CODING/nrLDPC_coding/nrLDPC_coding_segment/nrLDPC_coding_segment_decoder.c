@@ -28,7 +28,7 @@
 #else
 #define PRINT_CRC_CHECK(a)
 #endif
-#define DO_INTERNAL_TIME_MEASUREMENT (true)
+#define DO_INTERNAL_TIME_MEASUREMENT (false)
 #if DO_INTERNAL_TIME_MEASUREMENT
 #include "common/utils/var_array.h"
 #define inMicroS(a) (((double)(a))/(get_cpu_freq_GHz()*1000.0))
