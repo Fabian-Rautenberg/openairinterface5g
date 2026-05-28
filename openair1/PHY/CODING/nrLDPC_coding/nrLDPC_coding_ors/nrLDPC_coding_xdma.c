@@ -44,6 +44,7 @@
 #include "xdma_diag.h"
 #if DO_INTERNAL_TIME_MEASUREMENT
 #include "common/utils/var_array.h"
+#define inMicroS(a) (((double)(a))/(get_cpu_freq_GHz()*1000.0))
 #include "SIMULATION/LTE_PHY/common_sim.h"
 #endif
 
@@ -76,11 +77,13 @@ typedef struct internal_time_stats_s {
   bool valid;
   size_t numb_of_decoder_iter;
   uint32_t coderate;
+  uint32_t numb_of_successfully_decoded_cb;
 } internal_time_stats_t;
-#define NUMB_OF_TOTAL_TIME_POINTS (100U) //< assuming SNR step size 0.2, SNR range is 10 -> 10/0.2 = 50
+#define NUMB_OF_TOTAL_TIME_POINTS (100U) //< assuming SNR step size 0.2, SNR range of 20 -> 20/0.2 = 10 
+#define NUMB_OF_TOTAL_TIME_POINTS_POF (NUMB_OF_TOTAL_TIME_POINTS + 1U) //For OF management
 #define NUMB_OF_MAX_RETRANSMISSION (4U)
 #define NUMBER_OF_TRIALS_PER_SNR (100U)
-static internal_time_stats_t internal_time_stats[NUMB_OF_TOTAL_TIME_POINTS][NUMB_OF_MAX_RETRANSMISSION];
+static internal_time_stats_t internal_time_stats[NUMB_OF_TOTAL_TIME_POINTS_POF][NUMB_OF_MAX_RETRANSMISSION];
 static uint32_t timer_idx = 0;
 static uint32_t K4MS = 0; 
 static uint32_t Qm4MS = 0;
@@ -137,7 +140,7 @@ void nr_ulsch_FPGA_post_decoding(void *args);
 static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint32_t E, const uint32_t Z, const uint32_t Kprime, const uint8_t BG, const bool padded);
 static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F);
 static inline size_t get_Z_padding(const size_t nbits, const uint32_t Z);
-static inline simde__m128i reverse_bits_8x16(simde__m128i* x);
+static inline simde__m128i reverse_bits_8x16(const simde__m128i* x);
 
 /**
  * To support segment decoding as well, the following function has to be implemented.
@@ -354,7 +357,8 @@ int32_t nrLDPC_coding_shutdown(void)
       printf("--------------------------------------------------------------------------------------------\n");
       printf("Retransmission idx: %lu\n", j);
       printf("Number of LDPC decoder iteration done: %lu\n", internal_time_stats[i][j].numb_of_decoder_iter);
-      printf("Code rate: %lu\n", internal_time_stats[i][j].coderate);
+      printf("Code rate: %u\n", internal_time_stats[i][j].coderate);
+      printf("Numb of successfully decoded CBs: %u\n", internal_time_stats[i][j].numb_of_successfully_decoded_cb);
       printStatIndent(&internal_time_stats[i][j].total_process_tb_time, "Total TB process time");
       printDistribution(&internal_time_stats[i][j].total_process_tb_time, vr, "Total TB process time distribution");
       printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_time, "Total decoding time for all CBs");
@@ -429,7 +433,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   const uint32_t current_retransmission_idx = TB_params->rv_index;
   internal_time_stats_t* current_time_stat = &internal_time_stats[current_timer_idx][current_retransmission_idx];
   start_meas(&current_time_stat->total_process_tb_time);
-  current_time_stat->valid = true;
+  current_time_stat->valid = current_timer_idx < NUMB_OF_TOTAL_TIME_POINTS;
   dec_conf.dec_write_time = &current_time_stat->ts_h2c_time;
   dec_conf.dec_read_time  = &current_time_stat->ts_c2h_time;
   dec_conf.hw_dec_time    = &current_time_stat->ts_hw_dec_latency;
@@ -439,7 +443,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   if(local_trial_cntr == NUMBER_OF_TRIALS_PER_SNR)
   {
     local_trial_cntr = 0;
-    timer_idx++;
+    if(timer_idx < NUMB_OF_TOTAL_TIME_POINTS)
+      timer_idx++;
   }
   K4MS = K;
   Qm4MS = TB_params->Qm;
@@ -669,6 +674,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   for(uint32_t r = 0; r < TB_params->C; ++r)
   {
     *TB_params->processedSegments += TB_params->segments[r].decodeSuccess;
+#if DO_INTERNAL_TIME_MEASUREMENT
+    current_time_stat->numb_of_successfully_decoded_cb += TB_params->segments[r].decodeSuccess;
+#endif 
   }
 #if DO_INTERNAL_TIME_MEASUREMENT
   stop_meas(&current_time_stat->total_process_tb_time);
@@ -716,7 +724,7 @@ static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint
   return numb_of_parity_bits;
 }
 
-static inline simde__m128i reverse_bits_8x16(simde__m128i* x) {
+static inline simde__m128i reverse_bits_8x16(const simde__m128i* x) {
 
   const simde__m128i lut = simde_mm_setr_epi8(
       0x0, 0x8, 0x4, 0xC,
