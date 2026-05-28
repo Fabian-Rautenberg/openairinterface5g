@@ -78,6 +78,8 @@
 #include "SIMULATION/TOOLS/oai_cuda.h"
 #endif
 
+#define DO_EARLY_BREAK (true)
+#define DO_INTERNAL_MEASUREMENT (false)
 //#define DEBUG_ULSIM
 
 const char *__asan_default_options()
@@ -1210,7 +1212,7 @@ int main(int argc, char *argv[])
       errors_decoding = 0;
       NR_gNB_PUSCH *pusch_vars = &gNB->pusch_vars[UE_id];
 
-      while (round < max_rounds && crc_status && !stop) {
+      while (round < max_rounds && (crc_status || !(DO_EARLY_BREAK)) && !stop) {
 
         round_trials[round]++;
         rv_index = nr_get_rv(round % 4);
@@ -1834,6 +1836,13 @@ int main(int argc, char *argv[])
       printStatIndent2(&gNB->rx_pusch_init_stats, "RX PUSCH Initialization time");
       printStatIndent2(&gNB->rx_pusch_symbol_processing_stats, "RX PUSCH Symbol Processing time");
       printStatIndent(&gNB->ulsch_decoding_stats,"ULSCH total decoding time");
+#if DO_INTERNAL_MEASUREMENT
+      varArray_t* v = initVarArray(1, sizeof(double));
+      *((double*)dataArray(v))  = 0;
+      v->size = 1;
+      printDistribution(&gNB->ulsch_decoding_stats, v, "ULSCH total decoding time distrubution");
+      freeVarArray(v);
+#endif
       printStatIndent2(&gNB->ts_deinterleave, "ULSCH segment deinterleaving time");
       printStatIndent2(&gNB->ts_rate_unmatch, "ULSCH segment rate matching time");
       printStatIndent2(&gNB->ts_ldpc_decode, "ULSCH segments decoding time");
