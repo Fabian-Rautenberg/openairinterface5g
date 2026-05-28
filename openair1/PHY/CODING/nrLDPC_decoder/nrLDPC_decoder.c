@@ -845,14 +845,11 @@ static inline uint32_t nrLDPC_decoder_core(int8_t* p_llr,
               LOG_D(PHY, "Segment CRC OK, exiting LDPC decoder\n");
 #if DO_BREAK_EARLY
               break;
-<<<<<<< HEAD
             } else {
               LOG_D(PHY, "Segment CRC NOK, Kprime %d, BG %d, Z %d\n", p_decParams->Kprime, BG, Z);
-=======
 #else
               crc_successful = true;
 #endif
->>>>>>> 33809d1616 (Added the possibility of not break early)
             }
           }
         }
