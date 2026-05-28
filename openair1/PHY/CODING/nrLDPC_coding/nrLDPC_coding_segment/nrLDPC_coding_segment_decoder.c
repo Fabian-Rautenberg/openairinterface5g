@@ -28,6 +28,29 @@
 #else
 #define PRINT_CRC_CHECK(a)
 #endif
+#define DO_INTERNAL_TIME_MEASUREMENT (true)
+#if DO_INTERNAL_TIME_MEASUREMENT
+#include "common/utils/var_array.h"
+#define inMicroS(a) (((double)(a))/(get_cpu_freq_GHz()*1000.0))
+#include "SIMULATION/LTE_PHY/common_sim.h" 
+//Time measurements declaration begin
+typedef struct internal_time_stats_s {
+   
+  time_stats_t total_process_tb_time;
+
+  bool valid;
+  size_t numb_of_decoder_iter;
+  uint32_t coderate;
+  uint32_t numb_of_successfully_decoded_cb;
+} internal_time_stats_t;
+#define NUMB_OF_TOTAL_TIME_POINTS (100U) //< assuming SNR step size 0.2, SNR range of 20 -> 20/0.2 = 10 
+#define NUMB_OF_TOTAL_TIME_POINTS_POF (NUMB_OF_TOTAL_TIME_POINTS + 1U) //For OF management
+#define NUMB_OF_MAX_RETRANSMISSION (4U)
+#define NUMBER_OF_TRIALS_PER_SNR (100U)
+
+static internal_time_stats_t internal_time_stats[NUMB_OF_TOTAL_TIME_POINTS_POF][NUMB_OF_MAX_RETRANSMISSION];
+static uint32_t timer_idx = 0;
+#endif
 
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_interface.h"
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_nr_interface.h"
@@ -90,10 +113,19 @@ typedef struct nrLDPC_decoding_parameters_s {
 
   task_ans_t *ans;
 
+<<<<<<< HEAD
   time_stats_t ts_deinterleave;
   time_stats_t ts_rate_unmatch;
   time_stats_t ts_seg_prep;
   time_stats_t ts_ldpc_decode;
+=======
+  time_stats_t *p_ts_deinterleave;
+  time_stats_t *p_ts_rate_unmatch;
+  time_stats_t *p_ts_ldpc_decode;
+#if DO_INTERNAL_TIME_MEASUREMENT
+  internal_time_stats_t* current_timestat;
+#endif
+>>>>>>> cf32048bb8 (Added internal measurement functionality for SW version)
 } nrLDPC_decoding_parameters_t;
 
 static void nr_process_decode_segment(void *arg)
@@ -199,19 +231,18 @@ static void nr_process_decode_segment(void *arg)
   //////////////////////////////////////////////////////////////////////////////////////////
 
   ////////////////////////////////// pl =====> llrProcBuf //////////////////////////////////
-<<<<<<< HEAD
-  start_meas(&rdata->ts_ldpc_decode);
-  int decodeIterations = LDPCdecoder(p_decoderParms, l, (uint8_t *)llrProcBuf, p_procTime, rdata->abort_decode);
-  AssertFatal(rdata->c, "rdata->c is null, A %d, K %d\n", rdata->A, rdata->K);
-=======
-
   //calculate the true number of parity bits. Depending on rvidx and clear flag 
   int decodeIterations = LDPCdecoder(p_decoderParms, l, llrProcBuf, p_procTime, rdata->abort_decode);
-
->>>>>>> 65c621fe92 (Added the possibility to offload 25 CBs at a time)
+#if DO_INTERNAL_TIME_MEASUREMENT
+  rdata->current_timestat->numb_of_decoder_iter = decodeIterations;
+  rdata->current_timestat->coderate = p_decoderParms->R;
+#endif
   if (decodeIterations < p_decoderParms->numMaxIter) {
     memcpy(rdata->c, llrProcBuf, K >> 3);
     *rdata->decodeSuccess = true;
+#if DO_INTERNAL_TIME_MEASUREMENT
+    rdata->current_timestat->numb_of_successfully_decoded_cb++;
+#endif
   } else {
     LOG_D(PHY, "Decoding failed: K %d, Z %d, rv_index %d\n", K, rdata->Z, rdata->rv_index);
     memset(rdata->c, 0, K >> 3);
@@ -228,7 +259,22 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
                                thread_info_tm_t *t_info)
 {
   nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters = &nrLDPC_slot_decoding_parameters->TBs[pusch_id];
+#if DO_INTERNAL_TIME_MEASUREMENT
+  static uint32_t local_trial_cntr = 0;
+  const uint32_t current_timer_idx = timer_idx;
+  const uint32_t current_retransmission_idx = nrLDPC_TB_decoding_parameters->rv_index;
 
+  internal_time_stats_t* current_time_stat = &internal_time_stats[current_timer_idx][current_retransmission_idx];
+  local_trial_cntr += nrLDPC_TB_decoding_parameters->rv_index == 0; //< assuming first transmission starts with rv_index 0 and it isn't repeated anymore
+  current_time_stat->valid = current_timer_idx < NUMB_OF_TOTAL_TIME_POINTS;
+  if(local_trial_cntr == NUMBER_OF_TRIALS_PER_SNR)
+  {
+    local_trial_cntr = 0;
+    if(timer_idx < NUMB_OF_TOTAL_TIME_POINTS)
+      timer_idx++;
+  }
+  start_meas(&current_time_stat->total_process_tb_time);
+#endif
   *nrLDPC_TB_decoding_parameters->processedSegments = 0;
   t_nrLDPC_dec_params decParams = {.check_crc = check_crc};
   decParams.BG = nrLDPC_TB_decoding_parameters->BG;
@@ -264,6 +310,7 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
     rdata->rv_index = nrLDPC_TB_decoding_parameters->rv_index;
     rdata->tbslbrm = nrLDPC_TB_decoding_parameters->tbslbrm;
     rdata->abort_decode = nrLDPC_TB_decoding_parameters->abort_decode;
+<<<<<<< HEAD
     rdata->d = nrLDPC_TB_decoding_parameters->d + r * rdata->Kc * rdata->Z;
     rdata->d_to_be_cleared = nrLDPC_TB_decoding_parameters->d_to_be_cleared;
     rdata->c = nrLDPC_TB_decoding_parameters->c + r * (rdata->K >> 3);
@@ -284,20 +331,70 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
     reset_meas(&rdata->ts_rate_unmatch);
     reset_meas(&rdata->ts_seg_prep);
     reset_meas(&rdata->ts_ldpc_decode);
+=======
+    rdata->d = nrLDPC_TB_decoding_parameters->segments[r].d;
+    rdata->d_to_be_cleared = nrLDPC_TB_decoding_parameters->segments[r].d_to_be_cleared;
+    rdata->c = nrLDPC_TB_decoding_parameters->segments[r].c;
+    rdata->decodeSuccess = &nrLDPC_TB_decoding_parameters->segments[r].decodeSuccess;
+    rdata->p_ts_deinterleave = &nrLDPC_TB_decoding_parameters->segments[r].ts_deinterleave;
+    rdata->p_ts_rate_unmatch = &nrLDPC_TB_decoding_parameters->segments[r].ts_rate_unmatch;
+    rdata->p_ts_ldpc_decode = &nrLDPC_TB_decoding_parameters->segments[r].ts_ldpc_decode;
+#if DO_INTERNAL_TIME_MEASUREMENT
+    rdata->current_timestat = current_time_stat;
+#endif
+>>>>>>> cf32048bb8 (Added internal measurement functionality for SW version)
     task_t t = {.func = &nr_process_decode_segment, .args = rdata};
     pushTpool(nrLDPC_slot_decoding_parameters->threadPool, t);
     LOG_D(PHY, "Added a block to decode, in pipe: %d\n", r);
   }
+#if DO_INTERNAL_TIME_MEASUREMENT
+  stop_meas(&current_time_stat->total_process_tb_time);
+#endif
   return nrLDPC_TB_decoding_parameters->C;
 }
 
 int32_t nrLDPC_coding_init(void)
 {
+#if DO_INTERNAL_TIME_MEASUREMENT  
+  memset(&internal_time_stats[0][0], 0, sizeof(internal_time_stats));
+  timer_idx = 0;
+#endif
   return LDPCinit();
 }
 
 int32_t nrLDPC_coding_shutdown(void)
 {
+#if DO_INTERNAL_TIME_MEASUREMENT
+  varArray_t* vr = initVarArray(1, sizeof(double));
+  *((double*)dataArray(vr)) = 0;
+  vr->size++;
+  //printf("K %u, Qm: %u, MCS: %u, CBs: %u\n", K4MS, Qm4MS, MCS4MS, CBs4MS);
+  //Output internal timestats to file
+  for(size_t i = 0; i < NUMB_OF_TOTAL_TIME_POINTS; ++i)
+  {
+    printf("Total measurement IDX %lu:\n", i);
+    int invalid_cnt = 0;
+    for(size_t j = 0; j < NUMB_OF_MAX_RETRANSMISSION; ++j)
+    {
+      if(!internal_time_stats[i][j].valid)
+      {
+        invalid_cnt++;
+        continue;
+      }
+      printf("--------------------------------------------------------------------------------------------\n");
+      printf("Retransmission idx: %lu\n", j);
+      printf("Number of LDPC decoder iteration done: %lu\n", internal_time_stats[i][j].numb_of_decoder_iter);
+      printf("Code rate: %u\n", internal_time_stats[i][j].coderate);
+      printf("Numb of successfully decoded CBs: %u\n", internal_time_stats[i][j].numb_of_successfully_decoded_cb);
+      printStatIndent(&internal_time_stats[i][j].total_process_tb_time, "Total TB process time");
+      printDistribution(&internal_time_stats[i][j].total_process_tb_time, vr, "Total TB process time distribution");
+    }
+    printf("*********************************************************************************************\n");
+    if(invalid_cnt == NUMB_OF_MAX_RETRANSMISSION)
+      break;
+  }
+  free(vr);
+#endif
   return LDPCshutdown();
 }
 
