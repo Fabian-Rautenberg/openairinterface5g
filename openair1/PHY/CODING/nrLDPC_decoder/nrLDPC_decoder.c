@@ -22,6 +22,8 @@
 #define UNROLL_BN_PROC 1
 #define UNROLL_BN_PROC_PC 1
 #define UNROLL_BN2CN_PROC 1
+
+#define DO_BREAK_EARLY (true)
 /*----------------------------------------------------------------------
 |                  cn processing files -->AVX512
 /----------------------------------------------------------------------*/
@@ -532,11 +534,16 @@ static inline uint32_t nrLDPC_decoder_core(int8_t* p_llr,
     // First iteration finished
     uint32_t numIter = 0;
     int32_t pcRes = 1; // pcRes is 0 if the ldpc decoder is succesful
+#if !(DO_BREAK_EARLY)
+    bool crc_successful = false;
+#endif
     while ((numIter < numMaxIter) && (pcRes != 0)) {
+#if (DO_BREAK_EARLY)
       if (check_abort(ab)) {
         numIter = numMaxIter;
         break;
       }
+#endif
       // CN processing
 #ifdef NR_LDPC_PROFILER_DETAIL
         start_meas(&p_profiler->cnProc);
@@ -836,9 +843,16 @@ static inline uint32_t nrLDPC_decoder_core(int8_t* p_llr,
               nrLDPC_llr2bit(p_out, p_llrOut, numLLR);
             if (p_decParams->check_crc((uint8_t*)p_out, p_decParams->Kprime, p_decParams->crc_type)) {
               LOG_D(PHY, "Segment CRC OK, exiting LDPC decoder\n");
+#if DO_BREAK_EARLY
               break;
+<<<<<<< HEAD
             } else {
               LOG_D(PHY, "Segment CRC NOK, Kprime %d, BG %d, Z %d\n", p_decParams->Kprime, BG, Z);
+=======
+#else
+              crc_successful = true;
+#endif
+>>>>>>> 33809d1616 (Added the possibility of not break early)
             }
           }
         }
@@ -860,7 +874,11 @@ static inline uint32_t nrLDPC_decoder_core(int8_t* p_llr,
         nrLDPC_llr2bit(p_out, p_llrOut, numLLR);
       NR_LDPC_PROFILER_DETAIL(stop_meas(&p_profiler->llr2bit));
     }
+#if DO_BREAK_EARLY
     return numIter;
+#else
+    return crc_successful ? numMaxIter - 1: numMaxIter;
+#endif
 }
 
 
