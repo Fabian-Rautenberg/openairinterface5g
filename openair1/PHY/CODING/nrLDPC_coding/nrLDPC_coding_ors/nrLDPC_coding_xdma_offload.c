@@ -792,8 +792,9 @@ int32_t test_dma_init(devices_t devices)
   *(volatile uint32_t*)(map_base + OFFSET_RESET) &= ~(1 << 8);
 
   cpu_freq_GHz = get_cpu_freq_GHz();
-
+#if DO_INTERNAL_TIME_MEASUREMENT
   init_hw_timer();
+#endif
 
   fflush(stdout);
   test_dma_out:
@@ -953,7 +954,9 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   Confparam.z_j = z_j;
   pthread_mutex_lock(&hw_rw_lock);
   // LDPC accelerator start
+#if DO_INTERNAL_TIME_MEASUREMENT
   start_hw_timer();
+#endif
   if(dec_conf.dec_write_time != NULL)
     start_meas(dec_conf.dec_write_time);
   // write into accelerator
@@ -973,6 +976,7 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   }
   if(dec_conf.dec_read_time != NULL)
     stop_meas(dec_conf.dec_read_time);
+#if DO_INTERNAL_TIME_MEASUREMENT
   const uint32_t hw_ticks = get_hw_dec_latency_ticks();
   if(dec_conf.hw_dec_time != NULL)
     conv_hwtime2cputime(hw_ticks, dec_conf.hw_dec_time);
@@ -981,6 +985,7 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
     const uint32_t time_to_valid_ticks = get_hw_valid_ticks(); 
     conv_hwtime2cputime(time_to_valid_ticks, dec_conf.h2c_latency);
   }
+#endif
   pthread_mutex_unlock(&hw_rw_lock);
 
 

@@ -25,6 +25,8 @@
 #define CEIL_UP(X, M) ((X) + (GET_PADDING(X, M)))
 #define CEIL_UP_16B(X) CEIL_UP(X, 16)
 
+#define DO_INTERNAL_TIME_MEASUREMENT (false)
+
 /**
     \brief LDPC input parameter
     \param Zc shifting size
