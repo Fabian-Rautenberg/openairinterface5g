@@ -32,7 +32,6 @@
 #endif
 #define USE_PARITY_OPTIMIZATION (true)
 #define USE_OUTPUT_PARALLELIZATION (false)
-#define DO_INTERNAL_TIME_MEASUREMENT (false)
 #define USE_EXACT_BG (true)  
 
 
@@ -79,7 +78,7 @@ typedef struct internal_time_stats_s {
   uint32_t coderate;
   uint32_t numb_of_successfully_decoded_cb;
 } internal_time_stats_t;
-#define NUMB_OF_TOTAL_TIME_POINTS (100U) //< assuming SNR step size 0.2, SNR range of 20 -> 20/0.2 = 10 
+#define NUMB_OF_TOTAL_TIME_POINTS (100U) //< assuming SNR step size 0.2, SNR range of 20 -> 20/0.2 = 100 
 #define NUMB_OF_TOTAL_TIME_POINTS_POF (NUMB_OF_TOTAL_TIME_POINTS + 1U) //For OF management
 #define NUMB_OF_MAX_RETRANSMISSION (4U)
 #define NUMBER_OF_TRIALS_PER_SNR (100U)
