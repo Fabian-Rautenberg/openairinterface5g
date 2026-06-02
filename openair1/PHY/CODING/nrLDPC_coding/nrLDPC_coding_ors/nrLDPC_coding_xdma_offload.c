@@ -567,7 +567,7 @@ int test_dma_dec_read(char* DecOut, DecIPConf Confparam)
   size_t mx_iter = 0;
   for(size_t r = 0; r < CB_num; ++r)
   {
-    const uint16_t previous_set_id = max((CB_num - 1) - r, 255); 
+    const uint16_t previous_set_id = min((CB_num - 1) - r, 255); 
     if(headers[r].id != previous_set_id)
     {
       printf("Header ID mismatch. ID should be %u got %u.\n", previous_set_id, headers[r].id);
@@ -661,7 +661,7 @@ int test_dma_dec_write(char* data, DecIPConf Confparam)
     const size_t numb_of_16B_units = (local_size - HEADER_SIZE) / 16; //< header isn't part of data
     headers[r].max_schedule = max_schedule;
     headers[r].mb = mb;
-    headers[r].id = max(255, id);
+    headers[r].id = min(255, id);
     headers[r].max_iter = max_iter;
     headers[r].term_on_no_change = 1;
     headers[r].term_on_pass = 1;
