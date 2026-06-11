@@ -101,10 +101,18 @@ typedef struct {
 #define OFFSET_RESET 0x0004U
 #define PCIE_OFF 0x0030
 
-#define OFFSET_AXI_TIMER (0x10000U)
+#define OFFSET_AXI_TIMER0 (0x10000U)
+#define OFFSET_AXI_TIMER1 (0x20000U)
 
 #define CB_PROCESS_NUMBER 24 // add by JW
 #define CB_PROCESS_NUMBER_Dec 24
+
+typedef enum xdma_timer_e{
+  AXI_TIMER0 = 0,
+  AXI_TIMER1
+} xdma_timer_t;
+
+#define GET_TIMER_OFFSET(timer) ((timer) == AXI_TIMER0 ? OFFSET_AXI_TIMER0 : OFFSET_AXI_TIMER1)
 
 // dma_from_device.c
 

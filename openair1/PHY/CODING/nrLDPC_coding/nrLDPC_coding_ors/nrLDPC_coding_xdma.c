@@ -69,7 +69,8 @@ typedef struct internal_time_stats_s {
   time_stats_t ts_h2c_latency;
   time_stats_t ts_c2h_time;
   time_stats_t ts_h2c_time;
-  time_stats_t ts_hw_dec_latency; //< valid to last
+  time_stats_t ts_hw_dec_250MHz_latency; //< valid to last
+  time_stats_t ts_hw_dec_400MHz_latency; //< valid to last
   
   time_stats_t total_process_tb_time;
 
@@ -182,7 +183,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, int8_t *p_o
   DecIFConf dec_conf = {0};
   dec_conf.dec_write_time = &time_stats->llr2CnProcBuf;
   dec_conf.dec_read_time = &time_stats->cn2bnProcBuf;
-  dec_conf.hw_dec_time = &time_stats->bnProc;
+  dec_conf.hw_250MHz_dec_time = &time_stats->bnProc;
   dec_conf.Zc = p_decParams->Z;
   dec_conf.BG = p_decParams->BG;
   //select correct BG 
@@ -368,8 +369,10 @@ int32_t nrLDPC_coding_shutdown(void)
       printDistribution(&internal_time_stats[i][j].ts_h2c_time, vr, "H2C transfer time for all CBs distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_h2c_latency, "H2C latency");
       printDistribution(&internal_time_stats[i][j].ts_h2c_latency, vr, "H2C latency distribution");
-      printStatIndent3(&internal_time_stats[i][j].ts_hw_dec_latency, "HW dec latency (valid to last) for all CBs");
-      printDistribution(&internal_time_stats[i][j].ts_hw_dec_latency, vr, "HW dec latency (valid to last) for all CBs distribution");
+      printStatIndent3(&internal_time_stats[i][j].ts_hw_dec_250MHz_latency, "HW dec latency (valid to last) for all CBs (250 MHz clock domain)");
+      printDistribution(&internal_time_stats[i][j].ts_hw_dec_250MHz_latency, vr, "HW dec latency (valid to last) for all CBs distribution (250 MHz clock domain)");
+      printStatIndent3(&internal_time_stats[i][j].ts_hw_dec_400MHz_latency, "HW dec latency (valid to last) for all CBs (400 MHz clock domain)");
+      printDistribution(&internal_time_stats[i][j].ts_hw_dec_400MHz_latency, vr, "HW dec latency (valid to last) for all CBs distribution (400 MHz clock domain)");
       printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_prepare_time, "Total prepare time for all CBs");
       printDistribution(&internal_time_stats[i][j].ts_total_decoding_prepare_time, vr, "Total prepare time for all CBs distribution");
       printStatIndent3(&internal_time_stats[i][j].ts_deinterleaving_time, "Deinterleaving per CB");
@@ -435,7 +438,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   current_time_stat->valid = current_timer_idx < NUMB_OF_TOTAL_TIME_POINTS;
   dec_conf.dec_write_time = &current_time_stat->ts_h2c_time;
   dec_conf.dec_read_time  = &current_time_stat->ts_c2h_time;
-  dec_conf.hw_dec_time    = &current_time_stat->ts_hw_dec_latency;
+  dec_conf.hw_250MHz_dec_time = &current_time_stat->ts_hw_dec_250MHz_latency;
+  dec_conf.hw_400MHz_dec_time = &current_time_stat->ts_hw_dec_400MHz_latency;
   dec_conf.h2c_latency    = &current_time_stat->ts_h2c_latency;
   time_stats_t prepare_copying_time[MAX_CB] = {};
   local_trial_cntr += TB_params->rv_index == 0; //< assuming first transmission starts with rv_index 0 and it isn't repeated anymore
