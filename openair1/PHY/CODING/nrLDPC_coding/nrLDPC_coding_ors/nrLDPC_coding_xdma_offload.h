@@ -50,7 +50,8 @@ typedef struct {
   uint32_t numb_of_parity_bits_per_CB[MAX_CB];
   time_stats_t* dec_write_time;
   time_stats_t* dec_read_time;
-  time_stats_t* hw_dec_time;
+  time_stats_t* hw_250MHz_dec_time;
+  time_stats_t* hw_400MHz_dec_time;
   time_stats_t* h2c_latency;
 } DecIFConf;
 

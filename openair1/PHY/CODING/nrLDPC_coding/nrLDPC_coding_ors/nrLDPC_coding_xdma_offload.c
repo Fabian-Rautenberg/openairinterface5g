@@ -697,9 +697,10 @@ out:
   return rc;
 }
 
-void init_hw_timer()
+void init_hw_timer(const xdma_timer_t timer)
 {
-  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
+  const uint32_t offset = GET_TIMER_OFFSET(timer);
+  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + offset);
   for(uint32_t i = 0; i < 2; ++i)
   {
     base_hw_addr[i * 4 + 1] = 0;
@@ -716,9 +717,10 @@ void init_hw_timer()
   }
 }
 
-void start_hw_timer()
+void start_hw_timer(const xdma_timer_t timer)
 {
-  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
+  const uint32_t offset = GET_TIMER_OFFSET(timer);
+  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + offset);
   for(uint32_t i = 0; i < 2; ++i)
   {
     base_hw_addr[i * 4] &= ~(1U << 7);
@@ -730,17 +732,19 @@ void start_hw_timer()
   base_hw_addr[0] |= (1 << 10);
 }
 
-uint32_t get_hw_valid_ticks()
+uint32_t get_hw_valid_ticks(const xdma_timer_t timer)
 {
-  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
+  const uint32_t offset = GET_TIMER_OFFSET(timer);
+  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + offset);
   return base_hw_addr[1];
 }
 
-uint32_t get_hw_dec_latency_ticks()
+uint32_t get_hw_dec_latency_ticks(const xdma_timer_t timer)
 {
-  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + OFFSET_AXI_TIMER);
+  const uint32_t offset = GET_TIMER_OFFSET(timer);
+  volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + offset);
   const uint32_t end = base_hw_addr[5];
-  const uint32_t start = get_hw_valid_ticks();
+  const uint32_t start = get_hw_valid_ticks(timer);
   return end - start;
 }
 
@@ -793,7 +797,8 @@ int32_t test_dma_init(devices_t devices)
 
   cpu_freq_GHz = get_cpu_freq_GHz();
 #if DO_INTERNAL_TIME_MEASUREMENT
-  init_hw_timer();
+  init_hw_timer(AXI_TIMER0);
+  init_hw_timer(AXI_TIMER1);
 #endif
 
   fflush(stdout);
@@ -806,6 +811,7 @@ void dma_close()
 {
   pthread_mutex_destroy(&hw_rw_lock);
   *(volatile uint32_t*)(map_base + OFFSET_RESET) |= (1 << 8);
+  usleep(10);
   *(volatile uint32_t*)(map_base + OFFSET_RESET) &= ~(1 << 8);
   munmap(map_base, MAP_SIZE);
   if(fd_dec_write > 0)
@@ -875,9 +881,9 @@ void test_dma_shutdown()
   close(fd);
 }
 
-static void conv_hwtime2cputime(const uint32_t hw_ticks, time_stats_t* time)
+static void conv_hwtime2cputime(const uint32_t hw_ticks, time_stats_t* time, const xdma_timer_t timer)
 {
-  const double hw_freq_GHz = 0.25;
+  const double hw_freq_GHz = timer == AXI_TIMER0 ? 0.25 : 0.4;
   const double factor = cpu_freq_GHz/hw_freq_GHz;
   time->trials++;
   const oai_cputime_t cpu_ticks = (oai_cputime_t)(((double)hw_ticks)*factor);
@@ -955,7 +961,8 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   pthread_mutex_lock(&hw_rw_lock);
   // LDPC accelerator start
 #if DO_INTERNAL_TIME_MEASUREMENT
-  start_hw_timer();
+  start_hw_timer(AXI_TIMER0);
+  start_hw_timer(AXI_TIMER1);
 #endif
   if(dec_conf.dec_write_time != NULL)
     start_meas(dec_conf.dec_write_time);
@@ -977,13 +984,18 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   if(dec_conf.dec_read_time != NULL)
     stop_meas(dec_conf.dec_read_time);
 #if DO_INTERNAL_TIME_MEASUREMENT
-  const uint32_t hw_ticks = get_hw_dec_latency_ticks();
-  if(dec_conf.hw_dec_time != NULL)
-    conv_hwtime2cputime(hw_ticks, dec_conf.hw_dec_time);
+  const uint32_t hw_ticks = get_hw_dec_latency_ticks(AXI_TIMER0);
+  if(dec_conf.hw_250MHz_dec_time != NULL)
+    conv_hwtime2cputime(hw_ticks, dec_conf.hw_250MHz_dec_time, AXI_TIMER0);
   if(dec_conf.h2c_latency != NULL)
   {
-    const uint32_t time_to_valid_ticks = get_hw_valid_ticks(); 
-    conv_hwtime2cputime(time_to_valid_ticks, dec_conf.h2c_latency);
+    const uint32_t time_to_valid_ticks = get_hw_valid_ticks(AXI_TIMER0); 
+    conv_hwtime2cputime(time_to_valid_ticks, dec_conf.h2c_latency, AXI_TIMER0);
+  }
+  if(dec_conf.hw_400MHz_dec_time != NULL)
+  {
+    const uint32_t hw_ticks = get_hw_dec_latency_ticks(AXI_TIMER1);
+    conv_hwtime2cputime(hw_ticks, dec_conf.hw_400MHz_dec_time, AXI_TIMER1);
   }
 #endif
   pthread_mutex_unlock(&hw_rw_lock);
