@@ -773,7 +773,16 @@ inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_po
     nrLDPC_segment_decoding_parameters_t *segment_params = &args_post_decode->TB_params->segments[r];
     const uint8_t* CB_out_ptr = &args_post_decode->multi_outdata[r * args_post_decode->output_CBoffset + HEADER_SIZE];
     uint8_t* target_ptr = &segment_params->c[0];
-    memcpy(target_ptr, CB_out_ptr, cK);
+    const size_t numb_of_16B_units = cK / 16; 
+    const simde__m128i* ptr = (const simde__m128i *)CB_out_ptr; 
+    simde__m128i* out_ptr = (simde__m128i *)&segment_params->c[0];
+    for (int i = 0; i < numb_of_16B_units; i++)
+    {
+      out_ptr[i] = ptr[i];
+    }
+    //copy remaining bytes
+    const uint32_t rem = cK % 16;
+    memcpy(segment_params->c + numb_of_16B_units * 16U, CB_out_ptr + numb_of_16B_units * 16U, rem);
     const bool crc_successful = check_crc(segment_params->c, args_post_decode->length_dec, args_post_decode->crc_type);  
     segment_params->decodeSuccess = crc_successful;
   }
@@ -782,18 +791,7 @@ inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_po
 void nr_ulsch_FPGA_post_decoding_p(void *args)
 {
   args_fpga_post_decode_t *arguments = (args_fpga_post_decode_t *)args;
-  const uint32_t r_end = arguments->r_first + arguments->r_span;
-  const int K = arguments->K;
-  const size_t cK = (K + 7) / 8;
-  for (uint32_t r = arguments->r_first; r < r_end; r++) 
-  {
-    nrLDPC_segment_decoding_parameters_t *segment_params = &arguments->TB_params->segments[r];
-    const uint8_t* CB_out_ptr = &arguments->multi_outdata[r * arguments->output_CBoffset + HEADER_SIZE];
-    uint8_t* target_ptr = &segment_params->c[0];
-    memcpy(target_ptr, CB_out_ptr, cK);
-    const bool crc_successful = check_crc(segment_params->c, arguments->length_dec, arguments->crc_type);  
-    segment_params->decodeSuccess = crc_successful; 
-  }
+  nr_ulsch_FPGA_post_decoding_s(arguments);
   completed_task_ans(arguments->ans);
 }
 
