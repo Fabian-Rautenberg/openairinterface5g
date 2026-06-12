@@ -135,7 +135,8 @@ int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *slot_params, in
 // int32_t nrLDPC_coding_encoder(void);
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool);
 void nr_ulsch_FPGA_decoding_prepare_blocks(void *args);
-void nr_ulsch_FPGA_post_decoding(void *args);
+void nr_ulsch_FPGA_post_decoding_p(void *args);
+inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_post_decode);
 
 static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint32_t E, const uint32_t Z, const uint32_t Kprime, const uint8_t BG, const bool padded);
 static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F);
@@ -640,11 +641,12 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   current_time_stat->numb_of_decoder_iter = numb_of_iter;
 #endif
   //Copy to external buffer using the threadpool
-  init_task_ans(&ans, arr_size);
-  args_fpga_post_decode_t post_decode_args[MAX_CB];
 #if DO_INTERNAL_TIME_MEASUREMENT
   start_meas(&current_time_stat->ts_total_decoding_post_time);
 #endif
+#if USE_OUTPUT_PARALLELIZATION
+  args_fpga_post_decode_t post_decode_args[MAX_CB];
+  init_task_ans(&ans, arr_size);
   for (uint32_t r = 0; r < TB_params->C; /*r+=r_span*/) 
   {
     const uint32_t r_span = r_spans[r];
@@ -657,17 +659,25 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     post_decode_args[r].TB_params = TB_params;
     post_decode_args[r].output_CBoffset = out_CBoffset;
     post_decode_args[r].multi_outdata = &multi_outdata[0];
-    task_t t = {.func = &nr_ulsch_FPGA_post_decoding, .args = &post_decode_args[r]};
-    #if USE_OUTPUT_PARALLELIZATION
+    task_t t = {.func = &nr_ulsch_FPGA_post_decoding_p, .args = &post_decode_args[r]};
     pushTpool(ldpc_threadPool, t);
-    #else
-    tpool_t tmp_pool = {.len_thr = 0};  
-    pushTpool(&tmp_pool, t);
-    #endif
     r += r_span;
   }
-  //wait for threads to be completed
   join_task_ans(&ans);
+#else
+  const args_fpga_post_decode_t post_decode_arg = {
+    .r_first = 0,
+    .crc_type = crc_type,
+    .length_dec = length_dec,
+    .K = K,
+    .r_span = TB_params->C,
+    .TB_params = TB_params,
+    .output_CBoffset = out_CBoffset,
+    .multi_outdata = &multi_outdata[0]
+  };
+  nr_ulsch_FPGA_post_decoding_s(&post_decode_arg);
+#endif
+  //wait for threads to be completed
 #if DO_INTERNAL_TIME_MEASUREMENT
   stop_meas(&current_time_stat->ts_total_decoding_post_time);
 #endif
@@ -753,34 +763,34 @@ static inline simde__m128i reverse_bits_8x16(const simde__m128i* x) {
   );
 }
 
-void nr_ulsch_FPGA_post_decoding(void *args)
+inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_post_decode)
+{
+  const uint32_t r_end = args_post_decode->r_first + args_post_decode->r_span;
+  const int K = args_post_decode->K;
+  const size_t cK = (K + 7) / 8;
+  for(uint32_t r = args_post_decode->r_first; r < r_end; r++) 
+  {
+    nrLDPC_segment_decoding_parameters_t *segment_params = &args_post_decode->TB_params->segments[r];
+    const uint8_t* CB_out_ptr = &args_post_decode->multi_outdata[r * args_post_decode->output_CBoffset + HEADER_SIZE];
+    uint8_t* target_ptr = &segment_params->c[0];
+    memcpy(target_ptr, CB_out_ptr, cK);
+    const bool crc_successful = check_crc(segment_params->c, args_post_decode->length_dec, args_post_decode->crc_type);  
+    segment_params->decodeSuccess = crc_successful;
+  }
+}
+
+void nr_ulsch_FPGA_post_decoding_p(void *args)
 {
   args_fpga_post_decode_t *arguments = (args_fpga_post_decode_t *)args;
   const uint32_t r_end = arguments->r_first + arguments->r_span;
   const int K = arguments->K;
+  const size_t cK = (K + 7) / 8;
   for (uint32_t r = arguments->r_first; r < r_end; r++) 
   {
     nrLDPC_segment_decoding_parameters_t *segment_params = &arguments->TB_params->segments[r];
-    //copy result bits need to be reversed
-    const size_t cK = (K + 7) / 8;
-    const size_t numb_of_16B_units = cK / 16;
     const uint8_t* CB_out_ptr = &arguments->multi_outdata[r * arguments->output_CBoffset + HEADER_SIZE];
-    const simde__m128i* ptr = (const simde__m128i *)CB_out_ptr; 
-    simde__m128i* out_ptr = (simde__m128i *)&segment_params->c[0];
-    for (int i = 0; i < numb_of_16B_units; i++)
-    {
-      const simde__m128i reversed16B = reverse_bits_8x16(&ptr[i]);
-      out_ptr[i] = reversed16B;
-      //legacy reversing
-      //segment_params->c[i] = reverse_8bit(multi_outdata[i + r * out_CBoffset + HEADER_SIZE]);
-    }
-    //copy and reserving remaining bytes
-    const uint32_t rem = cK % 16;
-    for(int i = cK - rem; i < cK; ++i)
-    {
-      const uint8_t reversed = reverse_8bit(CB_out_ptr[i]); 
-      segment_params->c[i] = reversed;
-    }
+    uint8_t* target_ptr = &segment_params->c[0];
+    memcpy(target_ptr, CB_out_ptr, cK);
     const bool crc_successful = check_crc(segment_params->c, arguments->length_dec, arguments->crc_type);  
     segment_params->decodeSuccess = crc_successful; 
   }
@@ -886,8 +896,6 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     // skip filler bits, set paraity bits
     memcpy((&z[0] + KbZ), segment_params->d + (K - 2 * Z), numb_of_parity_bits * sizeof(int16_t));
 
-    const simde__m128i max_val =  simde_mm_set1_epi8(120);
-    const simde__m128i min_val =  simde_mm_set1_epi8(-120);
     size_t numb_to_copy = KbZ + numb_of_parity_bits;
     if(*segment_params->d_to_be_cleared && USE_PARITY_OPTIMIZATION)
     {
@@ -901,9 +909,6 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     // Saturate coded bits before decoding into 8 bits values
     for (int i = 0, j = 0; j < ((numb_to_copy) >> 4); i += 2, j++) {
       temp_multi_indata[j] = simde_mm_packs_epi16(pv[i], pv[i + 1]);  // transform 16 bit values to 8 bit values
-      //saturate from -120 to +120
-      temp_multi_indata[j] = simde_mm_max_epi8(temp_multi_indata[j], min_val);
-      temp_multi_indata[j] = simde_mm_min_epi8(temp_multi_indata[j], max_val);
     }
 #if DO_INTERNAL_TIME_MEASUREMENT
     stop_meas(&arguments->ts_copying_to_FPGA_buff[r]);
