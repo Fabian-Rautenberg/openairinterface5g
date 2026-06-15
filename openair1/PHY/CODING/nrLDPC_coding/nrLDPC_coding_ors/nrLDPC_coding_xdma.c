@@ -863,7 +863,7 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
   // the function processes r_span blocks starting from block at index r_first in ulsch_llr
   for (uint32_t r = r_first; r < (r_first + r_span); r++) {
     nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
-    const size_t offset = get_CB_offset(*segment_params->d_to_be_cleared, Z, Kc, segment_params->E, F);
+    const size_t offset = get_CB_offset(*segment_params->d_to_be_cleared, Z, Kc, segment_params->E, FF);
     // ----------------------- FPGA pre process ------------------------
     int8_t *const temp_multi_indata = (int8_t* const)&multi_indata[input_CBoffset + HEADER_SIZE];
     // -----------------------------------------------------------------
