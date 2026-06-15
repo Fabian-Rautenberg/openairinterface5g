@@ -113,19 +113,13 @@ typedef struct nrLDPC_decoding_parameters_s {
 
   task_ans_t *ans;
 
-<<<<<<< HEAD
   time_stats_t ts_deinterleave;
   time_stats_t ts_rate_unmatch;
   time_stats_t ts_seg_prep;
   time_stats_t ts_ldpc_decode;
-=======
-  time_stats_t *p_ts_deinterleave;
-  time_stats_t *p_ts_rate_unmatch;
-  time_stats_t *p_ts_ldpc_decode;
 #if DO_INTERNAL_TIME_MEASUREMENT
   internal_time_stats_t* current_timestat;
 #endif
->>>>>>> cf32048bb8 (Added internal measurement functionality for SW version)
 } nrLDPC_decoding_parameters_t;
 
 static void nr_process_decode_segment(void *arg)
@@ -310,7 +304,6 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
     rdata->rv_index = nrLDPC_TB_decoding_parameters->rv_index;
     rdata->tbslbrm = nrLDPC_TB_decoding_parameters->tbslbrm;
     rdata->abort_decode = nrLDPC_TB_decoding_parameters->abort_decode;
-<<<<<<< HEAD
     rdata->d = nrLDPC_TB_decoding_parameters->d + r * rdata->Kc * rdata->Z;
     rdata->d_to_be_cleared = nrLDPC_TB_decoding_parameters->d_to_be_cleared;
     rdata->c = nrLDPC_TB_decoding_parameters->c + r * (rdata->K >> 3);
@@ -331,18 +324,9 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
     reset_meas(&rdata->ts_rate_unmatch);
     reset_meas(&rdata->ts_seg_prep);
     reset_meas(&rdata->ts_ldpc_decode);
-=======
-    rdata->d = nrLDPC_TB_decoding_parameters->segments[r].d;
-    rdata->d_to_be_cleared = nrLDPC_TB_decoding_parameters->segments[r].d_to_be_cleared;
-    rdata->c = nrLDPC_TB_decoding_parameters->segments[r].c;
-    rdata->decodeSuccess = &nrLDPC_TB_decoding_parameters->segments[r].decodeSuccess;
-    rdata->p_ts_deinterleave = &nrLDPC_TB_decoding_parameters->segments[r].ts_deinterleave;
-    rdata->p_ts_rate_unmatch = &nrLDPC_TB_decoding_parameters->segments[r].ts_rate_unmatch;
-    rdata->p_ts_ldpc_decode = &nrLDPC_TB_decoding_parameters->segments[r].ts_ldpc_decode;
 #if DO_INTERNAL_TIME_MEASUREMENT
     rdata->current_timestat = current_time_stat;
 #endif
->>>>>>> cf32048bb8 (Added internal measurement functionality for SW version)
     task_t t = {.func = &nr_process_decode_segment, .args = rdata};
     pushTpool(nrLDPC_slot_decoding_parameters->threadPool, t);
     LOG_D(PHY, "Added a block to decode, in pipe: %d\n", r);
