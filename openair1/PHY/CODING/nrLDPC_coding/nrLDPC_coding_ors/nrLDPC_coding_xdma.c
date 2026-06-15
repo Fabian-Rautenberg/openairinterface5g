@@ -904,7 +904,9 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     }
 
     memset(segment_params->c, 0, K >> 3);
-
+#if DO_INTERNAL_TIME_MEASUREMENT
+    start_meas(&arguments->ts_copying_to_FPGA_buff[r]);
+#endif
     //set punctured bits
     memset(&temp_multi_indata[0], 0, 2 * Z);
     //set filler bits
@@ -915,10 +917,6 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     //set parity bits
     const uint32_t numb_of_parity_bits = get_number_of_parity_bits(*segment_params->d_to_be_cleared, segment_params->E, Z, Kprime, BG, true);
     pack_16bits_to_8bits_range(segment_params->d + (K - 2 * Z), &temp_multi_indata[KbZ], numb_of_parity_bits);
-
-#if DO_INTERNAL_TIME_MEASUREMENT
-    start_meas(&arguments->ts_copying_to_FPGA_buff[r]);
-#endif
 #if DO_INTERNAL_TIME_MEASUREMENT
     stop_meas(&arguments->ts_copying_to_FPGA_buff[r]);
 #endif
