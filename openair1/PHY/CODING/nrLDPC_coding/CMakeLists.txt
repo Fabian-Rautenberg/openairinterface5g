@@ -2,3 +2,4 @@
 
 add_subdirectory(nrLDPC_coding_segment)
 add_subdirectory(nrLDPC_coding_aal)
+add_subdirectory(nrLDPC_coding_ors)
