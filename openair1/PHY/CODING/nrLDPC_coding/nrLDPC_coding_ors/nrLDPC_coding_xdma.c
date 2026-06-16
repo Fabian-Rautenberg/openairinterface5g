@@ -638,12 +638,12 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   }
 #if DO_INTERNAL_TIME_MEASUREMENT
   stop_meas(&current_time_stat->ts_total_decoding_prepare_time);
+  merge_meas(&current_time_stat->ts_rate_dematching_time, &TB_params->ts_rate_unmatch);
+  merge_meas(&current_time_stat->ts_deinterleaving_time, &TB_params->ts_deinterleave);
   for(uint32_t r = 0; r < TB_params->C; r++)
   {
     merge_meas(&current_time_stat->ts_prepare_copying_time, &prepare_copying_time[r]);
-    merge_meas(&current_time_stat->ts_rate_dematching_time, &TB_params->segments[r].ts_rate_unmatch);
-    merge_meas(&current_time_stat->ts_deinterleaving_time, &TB_params->segments[r].ts_deinterleave);
-    current_time_stat->coderate = TB_params->segments[r].R;
+    current_time_stat->coderate = get_current_R(TB_params, r);
   }
 #endif
   // launch decode with FPGA
@@ -659,7 +659,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
 #endif
   stop_meas(&TB_params->ts_ldpc_decode);
 #if DO_INTERNAL_TIME_MEASUREMENT
-  merge_meas(&current_time_stat->ts_total_decoding_time, &TB_params->segments[0].ts_ldpc_decode);
+  merge_meas(&current_time_stat->ts_total_decoding_time, &TB_params->ts_ldpc_decode);
   current_time_stat->numb_of_decoder_iter = numb_of_iter;
 #endif
   //Copy to external buffer using the threadpool
@@ -709,11 +709,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   for(uint32_t r = 0; r < TB_params->C; ++r)
   {
     *TB_params->processedSegments += TB_params->decodeSuccess[r];
-#if DO_INTERNAL_TIME_MEASUREMENT
-    current_time_stat->numb_of_successfully_decoded_cb += TB_params->segments[r].decodeSuccess;
-#endif 
   }
 #if DO_INTERNAL_TIME_MEASUREMENT
+  current_time_stat->numb_of_successfully_decoded_cb = *TB_params->processedSegments;
   stop_meas(&current_time_stat->total_process_tb_time);
 #endif 
   return 0;
