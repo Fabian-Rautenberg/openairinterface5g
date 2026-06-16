@@ -617,7 +617,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     for(size_t current_r = r; current_r < (r + r_span); ++current_r)
     {
       const int current_E = get_current_E(TB_params, current_r);
-      input_CBoffset += get_CB_offset(TB_params->d_to_be_cleared, TB_params->Z, Kc, current_E, TB_params->F);
+      const int FF = Kb * TB_params->Z - Kprime;
+      input_CBoffset += get_CB_offset(TB_params->d_to_be_cleared, TB_params->Z, Kc, current_E, FF);
       dec_conf.numb_of_parity_bits_per_CB[current_r] = get_number_of_parity_bits(TB_params->d_to_be_cleared, current_E, TB_params->Z, Kprime, TB_params->BG, true);
       r_offset += current_E;
     }
