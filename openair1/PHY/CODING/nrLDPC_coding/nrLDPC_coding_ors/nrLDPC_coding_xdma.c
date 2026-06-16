@@ -238,8 +238,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
   dec_conf.numCB = 1; 
   // input soft bits length; not sure if calculation is correct
   dec_conf.numChannelLls = p_decParams->Kprime;
-  // filler bits length
-  dec_conf.numFillerBits = 0;
+  
   dec_conf.max_schedule = 0;
   dec_conf.SetIdx = 12;
   //number of message words/number of rows in BG
@@ -258,52 +257,27 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
 
   const int N = p_decParams->BG == 2 ? 50 * p_decParams->Z : 66 * p_decParams->Z;
   const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
-  const int F = K - p_decParams->Kprime;
-  const int punctured_bits = 2 * p_decParams->Z; 
-  const int8_t max_level = 120;
+  // filler bits length
+  const int F = Kb * p_decParams->Z - p_decParams->Kprime;
+  dec_conf.numFillerBits = F;
   start_meas(&time_stats->llr2llrProcBuf);
   //copy all LLRs in internal buffer starting at HEADER_SIZE
   start_meas(&time_stats->total);
-  //copy punctured bits
-  memcpy(&buffer_in[HEADER_SIZE], p_llr, punctured_bits * sizeof(*p_llr));
   //copy information bits
-  for(int i = punctured_bits; i < p_decParams->Kprime; ++i)
-  {
-    if(p_llr[i] > max_level)
-      buffer_in[HEADER_SIZE + i] = max_level;
-    else if(p_llr[i] < -max_level)
-      buffer_in[HEADER_SIZE + i] = -max_level;
-    else
-      buffer_in[HEADER_SIZE + i] = p_llr[i];
-  }
+  memcpy(&buffer_in[HEADER_SIZE], p_llr, p_decParams->Kprime);
   //set filler bits
-  memset(&buffer_in[HEADER_SIZE + p_decParams->Kprime], max_level, F);
+  memset(&buffer_in[HEADER_SIZE + p_decParams->Kprime], INT8_MAX, F);
   //copy parity bits
-  for(int i = Kb * p_decParams->Z, j = K; j < N + punctured_bits; ++i, ++j)
-  {
-    if(p_llr[j] > max_level)
-      buffer_in[HEADER_SIZE + i] = max_level;
-    else if(p_llr[j] < -max_level)
-      buffer_in[HEADER_SIZE + i] = -max_level;
-    else
-      buffer_in[HEADER_SIZE + i] = p_llr[j];
-  }
+  const int numb_of_parity_bits = N + 2 * p_decParams->Z - K;
+  dec_conf.numb_of_parity_bits_per_CB[0] = numb_of_parity_bits;
+  memcpy(&buffer_in[HEADER_SIZE + Kb * p_decParams->Z], p_llr + K, numb_of_parity_bits);
   stop_meas(&time_stats->llr2llrProcBuf);
   start_meas(&time_stats->llr2bit);
   int32_t niter = nrLDPC_decoder_FPGA_PYM((uint8_t*)&buffer_in[0], (uint8_t*)&buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);
-  //calculate number of 8 bit units to copy
-  const int cK = (Kb * p_decParams->Z + 7) / 8; 
   start_meas(&time_stats->llrRes2llrOut);
-  //copy into out buffer and reverse bits
-  for(int i = 0; i < cK; ++i)
-  {
-    //TODO remove
-    p_out[i] = (int8_t)reverse_8bit((uint8_t)buffer_out[HEADER_SIZE + i]);
-  }
-  //set the remaining bits to zero
-  const int rem = (K + 7) / 8 - cK;
-  memset(p_out + cK, 0, rem);
+  //copy into out buffer
+  memcpy(p_out, &buffer_out[HEADER_SIZE], K / 8);
   stop_meas(&time_stats->llrRes2llrOut);
   stop_meas(&time_stats->total);
   if(p_decParams->check_crc != NULL)
