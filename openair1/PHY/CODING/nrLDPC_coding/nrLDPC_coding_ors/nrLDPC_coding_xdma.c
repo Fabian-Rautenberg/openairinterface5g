@@ -870,6 +870,7 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
   const int KbZ = Kb * Z;
   //Filler bits regarding Kb value
   const int FF = KbZ - Kprime;
+  int16_t z[68 * 384 + 16] __attribute__((aligned(16)));
   // the function processes r_span blocks starting from block at index r_first in ulsch_llr
   for (uint32_t r = r_first; r < (r_first + r_span); r++) {
     const int E = get_current_E(TB_params, r);
@@ -883,7 +884,6 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     // -------------------------------------------------------------------------------------------
     // deinterleaving
     // -------------------------------------------------------------------------------------------
-    
     start_meas(&p_time_measurements[r].ts_ldpc_deinterleave);
     nr_deinterleaving_ldpc(E, Qm, harq_e, ulsch_llr + r_offset);
     stop_meas(&p_time_measurements[r].ts_ldpc_deinterleave);
@@ -920,16 +920,23 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
 #if DO_INTERNAL_TIME_MEASUREMENT
     start_meas(&arguments->ts_copying_to_FPGA_buff[r]);
 #endif
-    //set punctured bits
-    memset(&temp_multi_indata[0], 0, 2 * Z);
-    //set filler bits
-    memset(&temp_multi_indata[Kprime], INT8_MAX, FF);
-    //set information bits
-    const uint32_t numb_of_information_bits = Kprime - 2 * Z;
-    pack_16bits_to_8bits_range(local_d, &temp_multi_indata[2 * Z], numb_of_information_bits);
-    //set parity bits
-    const uint32_t numb_of_parity_bits = get_number_of_parity_bits(TB_params->d_to_be_cleared, E, Z, Kprime, BG, true);
-    pack_16bits_to_8bits_range(local_d + (K - 2 * Z), &temp_multi_indata[KbZ], numb_of_parity_bits);
+    // set first 2*Z_c bits to zeros; these are the punctured bits
+    memset(&z[0], 0, 2 * Z * sizeof(int16_t));
+    // set Filler bits
+    memset((&z[0] + Kprime), INT8_MAX, FF * sizeof(int16_t));
+    // Move coded bits before filler bits
+    memcpy((&z[0] + 2 * Z), local_d, (Kprime - 2 * Z) * sizeof(int16_t));
+    const uint32_t numb_of_parity_bits = Kc * Z - K;
+    // skip filler bits, set paraity bits
+    memcpy((&z[0] + KbZ), local_d + (K - 2 * Z), numb_of_parity_bits * sizeof(int16_t));
+    size_t numb_to_copy = KbZ + numb_of_parity_bits;
+    if(TB_params->d_to_be_cleared && USE_PARITY_OPTIMIZATION)
+    {
+      numb_to_copy = 2 * Z + E + FF;
+      numb_to_copy += get_Z_padding(numb_to_copy, Z);
+    }
+    numb_to_copy = CEIL_UP_16B(numb_to_copy); 
+    pack_16bits_to_8bits_range(&z[0], &temp_multi_indata[0], numb_to_copy);
 #if DO_INTERNAL_TIME_MEASUREMENT
     stop_meas(&arguments->ts_copying_to_FPGA_buff[r]);
 #endif
