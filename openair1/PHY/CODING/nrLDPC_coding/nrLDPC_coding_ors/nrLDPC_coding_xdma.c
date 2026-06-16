@@ -142,6 +142,8 @@ static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint
 static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F);
 static inline size_t get_Z_padding(const size_t nbits, const uint32_t Z);
 static inline simde__m128i reverse_bits_8x16(const simde__m128i* x);
+static inline void pack_16bits_to_8bits_range(const int16_t* const src_ptr, int8_t* const dst_ptr, const size_t dst_range);
+
 
 /**
  * To support segment decoding as well, the following function has to be implemented.
@@ -772,7 +774,6 @@ inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_po
   {
     nrLDPC_segment_decoding_parameters_t *segment_params = &args_post_decode->TB_params->segments[r];
     const uint8_t* CB_out_ptr = &args_post_decode->multi_outdata[r * args_post_decode->output_CBoffset + HEADER_SIZE];
-    uint8_t* target_ptr = &segment_params->c[0];
     const size_t numb_of_16B_units = cK / 16; 
     const simde__m128i* ptr = (const simde__m128i *)CB_out_ptr; 
     simde__m128i* out_ptr = (simde__m128i *)&segment_params->c[0];
@@ -793,6 +794,28 @@ void nr_ulsch_FPGA_post_decoding_p(void *args)
   args_fpga_post_decode_t *arguments = (args_fpga_post_decode_t *)args;
   nr_ulsch_FPGA_post_decoding_s(arguments);
   completed_task_ans(arguments->ans);
+}
+
+static inline void pack_16bits_to_8bits_range(const int16_t* const src_ptr, int8_t* const dst_ptr, const size_t dst_range)
+{
+  const size_t dst_range_16B_units = dst_range / 16U;
+  simde__m128i* const dst_ptr_128b = (simde__m128i* const)dst_ptr;
+  const simde__m128i* const src_ptr_128b = (const simde__m128i* const)src_ptr;
+  for(size_t i = 0, j = 0; j < dst_range_16B_units; i+=2, ++j)
+  {
+    dst_ptr_128b[j] = simde_mm_packs_epi16(src_ptr_128b[i], src_ptr_128b[i + 1]);
+  }
+  //set last bytes in the case dst range isn't a multiple of 16
+  if((dst_range % 16U) != 0)
+  {
+    const size_t offset = 16 * dst_range_16B_units;
+    for(size_t i = offset; i < dst_range; ++i)
+    {
+      int16_t tmp = max(src_ptr[i], ((int16_t)INT8_MIN));
+      tmp = min(tmp, ((int16_t)INT8_MAX));
+      dst_ptr[i] = (int8_t)tmp;
+    }
+  }
 }
 
 /*!
@@ -837,14 +860,12 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
   const int KbZ = Kb * Z;
   //Filler bits regarding Kb value
   const int FF = KbZ - Kprime;
-  int16_t z[68 * 384 + 16] __attribute__((aligned(16)));
-  simde__m128i *pv = (simde__m128i *)&z;
   // the function processes r_span blocks starting from block at index r_first in ulsch_llr
   for (uint32_t r = r_first; r < (r_first + r_span); r++) {
     nrLDPC_segment_decoding_parameters_t *segment_params = &TB_params->segments[r];
-    const size_t offset = get_CB_offset(*segment_params->d_to_be_cleared, Z, Kc, segment_params->E, F);
+    const size_t offset = get_CB_offset(*segment_params->d_to_be_cleared, Z, Kc, segment_params->E, FF);
     // ----------------------- FPGA pre process ------------------------
-    simde__m128i *temp_multi_indata = (simde__m128i *)&multi_indata[input_CBoffset + HEADER_SIZE];
+    int8_t *const temp_multi_indata = (int8_t* const)&multi_indata[input_CBoffset + HEADER_SIZE];
     // -----------------------------------------------------------------
 
     // code blocks after bit selection in rate matching for LDPC code (38.212 V15.4.0 section 5.4.2.1)
@@ -883,31 +904,19 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     }
 
     memset(segment_params->c, 0, K >> 3);
-
-    // set first 2*Z_c bits to zeros; are these the punctured bits?
-    memset(&z[0], 0, 2 * Z * sizeof(int16_t));
-    // set Filler bits
-    memset((&z[0] + Kprime), 120, FF * sizeof(int16_t));
-    // Move coded bits before filler bits
-    memcpy((&z[0] + 2 * Z), segment_params->d, (Kprime - 2 * Z) * sizeof(int16_t));
-    const uint32_t numb_of_parity_bits = Kc * Z - K;
-    // skip filler bits, set paraity bits
-    memcpy((&z[0] + KbZ), segment_params->d + (K - 2 * Z), numb_of_parity_bits * sizeof(int16_t));
-
-    size_t numb_to_copy = KbZ + numb_of_parity_bits;
-    if(*segment_params->d_to_be_cleared && USE_PARITY_OPTIMIZATION)
-    {
-      numb_to_copy = 2 * Z + segment_params->E + FF;
-      numb_to_copy += get_Z_padding(numb_to_copy, Z);
-    }
-    numb_to_copy = CEIL_UP_16B(numb_to_copy); 
 #if DO_INTERNAL_TIME_MEASUREMENT
     start_meas(&arguments->ts_copying_to_FPGA_buff[r]);
 #endif
-    // Saturate coded bits before decoding into 8 bits values
-    for (int i = 0, j = 0; j < ((numb_to_copy) >> 4); i += 2, j++) {
-      temp_multi_indata[j] = simde_mm_packs_epi16(pv[i], pv[i + 1]);  // transform 16 bit values to 8 bit values
-    }
+    //set punctured bits
+    memset(&temp_multi_indata[0], 0, 2 * Z);
+    //set filler bits
+    memset(&temp_multi_indata[Kprime], INT8_MAX, FF);
+    //set information bits
+    const uint32_t numb_of_information_bits = Kprime - 2 * Z;
+    pack_16bits_to_8bits_range(segment_params->d, &temp_multi_indata[2 * Z], numb_of_information_bits);
+    //set parity bits
+    const uint32_t numb_of_parity_bits = get_number_of_parity_bits(*segment_params->d_to_be_cleared, segment_params->E, Z, Kprime, BG, true);
+    pack_16bits_to_8bits_range(segment_params->d + (K - 2 * Z), &temp_multi_indata[KbZ], numb_of_parity_bits);
 #if DO_INTERNAL_TIME_MEASUREMENT
     stop_meas(&arguments->ts_copying_to_FPGA_buff[r]);
 #endif
