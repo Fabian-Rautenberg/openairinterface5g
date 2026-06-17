@@ -39,7 +39,7 @@ typedef struct internal_time_stats_s {
   time_stats_t total_process_tb_time;
 
   bool valid;
-  size_t numb_of_decoder_iter;
+  //size_t numb_of_decoder_iter;
   uint32_t coderate;
   uint32_t numb_of_successfully_decoded_cb;
 } internal_time_stats_t;
@@ -50,6 +50,7 @@ typedef struct internal_time_stats_s {
 
 static internal_time_stats_t internal_time_stats[NUMB_OF_TOTAL_TIME_POINTS_POF][NUMB_OF_MAX_RETRANSMISSION];
 static uint32_t timer_idx = 0;
+static internal_time_stats_t* current_time_stat = NULL;
 #endif
 
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_interface.h"
@@ -117,9 +118,6 @@ typedef struct nrLDPC_decoding_parameters_s {
   time_stats_t ts_rate_unmatch;
   time_stats_t ts_seg_prep;
   time_stats_t ts_ldpc_decode;
-#if DO_INTERNAL_TIME_MEASUREMENT
-  internal_time_stats_t* current_timestat;
-#endif
 } nrLDPC_decoding_parameters_t;
 
 static void nr_process_decode_segment(void *arg)
@@ -226,17 +224,11 @@ static void nr_process_decode_segment(void *arg)
 
   ////////////////////////////////// pl =====> llrProcBuf //////////////////////////////////
   //calculate the true number of parity bits. Depending on rvidx and clear flag 
+  start_meas(&rdata->ts_ldpc_decode);
   int decodeIterations = LDPCdecoder(p_decoderParms, l, llrProcBuf, p_procTime, rdata->abort_decode);
-#if DO_INTERNAL_TIME_MEASUREMENT
-  rdata->current_timestat->numb_of_decoder_iter = decodeIterations;
-  rdata->current_timestat->coderate = p_decoderParms->R;
-#endif
   if (decodeIterations < p_decoderParms->numMaxIter) {
     memcpy(rdata->c, llrProcBuf, K >> 3);
     *rdata->decodeSuccess = true;
-#if DO_INTERNAL_TIME_MEASUREMENT
-    rdata->current_timestat->numb_of_successfully_decoded_cb++;
-#endif
   } else {
     LOG_D(PHY, "Decoding failed: K %d, Z %d, rv_index %d\n", K, rdata->Z, rdata->rv_index);
     memset(rdata->c, 0, K >> 3);
@@ -253,22 +245,6 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
                                thread_info_tm_t *t_info)
 {
   nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters = &nrLDPC_slot_decoding_parameters->TBs[pusch_id];
-#if DO_INTERNAL_TIME_MEASUREMENT
-  static uint32_t local_trial_cntr = 0;
-  const uint32_t current_timer_idx = timer_idx;
-  const uint32_t current_retransmission_idx = nrLDPC_TB_decoding_parameters->rv_index;
-
-  internal_time_stats_t* current_time_stat = &internal_time_stats[current_timer_idx][current_retransmission_idx];
-  local_trial_cntr += nrLDPC_TB_decoding_parameters->rv_index == 0; //< assuming first transmission starts with rv_index 0 and it isn't repeated anymore
-  current_time_stat->valid = current_timer_idx < NUMB_OF_TOTAL_TIME_POINTS;
-  if(local_trial_cntr == NUMBER_OF_TRIALS_PER_SNR)
-  {
-    local_trial_cntr = 0;
-    if(timer_idx < NUMB_OF_TOTAL_TIME_POINTS)
-      timer_idx++;
-  }
-  start_meas(&current_time_stat->total_process_tb_time);
-#endif
   *nrLDPC_TB_decoding_parameters->processedSegments = 0;
   t_nrLDPC_dec_params decParams = {.check_crc = check_crc};
   decParams.BG = nrLDPC_TB_decoding_parameters->BG;
@@ -325,15 +301,12 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
     reset_meas(&rdata->ts_seg_prep);
     reset_meas(&rdata->ts_ldpc_decode);
 #if DO_INTERNAL_TIME_MEASUREMENT
-    rdata->current_timestat = current_time_stat;
+    current_time_stat->coderate = decParams.R;
 #endif
     task_t t = {.func = &nr_process_decode_segment, .args = rdata};
     pushTpool(nrLDPC_slot_decoding_parameters->threadPool, t);
     LOG_D(PHY, "Added a block to decode, in pipe: %d\n", r);
   }
-#if DO_INTERNAL_TIME_MEASUREMENT
-  stop_meas(&current_time_stat->total_process_tb_time);
-#endif
   return nrLDPC_TB_decoding_parameters->C;
 }
 
@@ -367,7 +340,7 @@ int32_t nrLDPC_coding_shutdown(void)
       }
       printf("--------------------------------------------------------------------------------------------\n");
       printf("Retransmission idx: %lu\n", j);
-      printf("Number of LDPC decoder iteration done: %lu\n", internal_time_stats[i][j].numb_of_decoder_iter);
+      //printf("Number of LDPC decoder iteration done: %lu\n", internal_time_stats[i][j].numb_of_decoder_iter);
       printf("Code rate: %u\n", internal_time_stats[i][j].coderate);
       printf("Numb of successfully decoded CBs: %u\n", internal_time_stats[i][j].numb_of_successfully_decoded_cb);
       printStatIndent(&internal_time_stats[i][j].total_process_tb_time, "Total TB process time");
@@ -384,6 +357,22 @@ int32_t nrLDPC_coding_shutdown(void)
 
 int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_decoding_parameters)
 {
+#if DO_INTERNAL_TIME_MEASUREMENT
+  static uint32_t local_trial_cntr = 0;
+  const uint32_t current_timer_idx = timer_idx;
+  const uint32_t current_retransmission_idx = nrLDPC_slot_decoding_parameters->TBs[0].rv_index;
+
+  current_time_stat = &internal_time_stats[current_timer_idx][current_retransmission_idx];
+  local_trial_cntr += current_retransmission_idx == 0; //< assuming first transmission starts with rv_index 0 and it isn't repeated anymore
+  current_time_stat->valid = current_timer_idx < NUMB_OF_TOTAL_TIME_POINTS;
+  if(local_trial_cntr == NUMBER_OF_TRIALS_PER_SNR)
+  {
+    local_trial_cntr = 0;
+    if(timer_idx < NUMB_OF_TOTAL_TIME_POINTS)
+      timer_idx++;
+  }
+  start_meas(&current_time_stat->total_process_tb_time);
+#endif
   int nbSegments = 0;
   for (int pusch_id = 0; pusch_id < nrLDPC_slot_decoding_parameters->nb_TBs; pusch_id++) {
     nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters = &nrLDPC_slot_decoding_parameters->TBs[pusch_id];
@@ -416,6 +405,12 @@ int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_dec
       merge_meas(&nrLDPC_TB_decoding_parameters->ts_seg_prep, &rdata->ts_seg_prep);
       merge_meas(&nrLDPC_TB_decoding_parameters->ts_ldpc_decode, &rdata->ts_ldpc_decode);
     }
+#if DO_INTERNAL_TIME_MEASUREMENT
+    current_time_stat->numb_of_successfully_decoded_cb += *nrLDPC_TB_decoding_parameters->processedSegments; 
+#endif
   }
+#if DO_INTERNAL_TIME_MEASUREMENT
+  stop_meas(&current_time_stat->total_process_tb_time);
+#endif
   return 0;
 }
