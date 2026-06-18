@@ -146,7 +146,6 @@ static inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* 
 static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint32_t E, const uint32_t Z, const uint32_t Kprime, const uint8_t BG, const bool padded);
 static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F);
 static inline size_t get_Z_padding(const size_t nbits, const uint32_t Z);
-static inline simde__m128i reverse_bits_8x16(const simde__m128i* x);
 static inline void pack_16bits_to_8bits_range(const int16_t* const src_ptr, int8_t* const dst_ptr, const size_t dst_range);
 static inline uint8_t get_current_R(const nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters, const size_t current_r);
 static inline int get_current_E(const nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters, const size_t current_r);
@@ -159,7 +158,6 @@ static inline int get_current_llr_offset(const nrLDPC_TB_decoding_parameters_t *
 int32_t LDPCinit(void);
 int32_t LDPCshutdown(void);
 int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_out, t_nrLDPC_time_stats *time_stats, decode_abort_t *ab);
-static uint8_t reverse_8bit(uint8_t byte);
 int32_t LDPCinit(void)
 {
   devices_t dev = {.dec_read_device = DEVICE_NAME_DEFAULT_DEC_READ,
@@ -290,14 +288,6 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
   }
   return niter;
 } 
-
-static uint8_t reverse_8bit(uint8_t byte)
-{
-  byte = ((byte & 0xF0U) >> 4) | ((byte & 0x0FU) << 4);
-  byte = ((byte & 0xCCU) >> 2) | ((byte & 0x33U) << 2);
-  byte = ((byte & 0xAAU) >> 1) | ((byte & 0x55U) << 1);
-  return byte;
-}
 
 
 
@@ -730,32 +720,6 @@ static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint
     numb_of_parity_bits = BG == 1 ? 46 * Z : 42 * Z;
   }
   return numb_of_parity_bits;
-}
-
-static inline simde__m128i reverse_bits_8x16(const simde__m128i* x) {
-
-  const simde__m128i lut = simde_mm_setr_epi8(
-      0x0, 0x8, 0x4, 0xC,
-      0x2, 0xA, 0x6, 0xE,
-      0x1, 0x9, 0x5, 0xD,
-      0x3, 0xB, 0x7, 0xF
-  );
-
-  const simde__m128i mask = simde_mm_set1_epi8(0x0F);
-
-  simde__m128i lo = simde_mm_and_si128(*x, mask);
-  simde__m128i hi = simde_mm_and_si128(
-      simde_mm_srli_epi16(*x, 4),
-      mask
-  );
-
-  lo = simde_mm_shuffle_epi8(lut, lo);
-  hi = simde_mm_shuffle_epi8(lut, hi);
-
-  return simde_mm_or_si128(
-      simde_mm_slli_epi16(lo, 4),
-      hi
-  );
 }
 
 static inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_post_decode)
