@@ -190,9 +190,15 @@ int32_t LDPCshutdown(void)
 int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_out, t_nrLDPC_time_stats *time_stats, decode_abort_t *ab)
 {
   DecIFConf dec_conf = {0};
+#if DO_INTERNAL_TIME_MEASUREMENT
   dec_conf.dec_write_time = &time_stats->llr2CnProcBuf;
   dec_conf.dec_read_time = &time_stats->cn2bnProcBuf;
   dec_conf.hw_250MHz_dec_time = &time_stats->bnProc;
+#else
+  dec_conf.dec_write_time = NULL;
+  dec_conf.dec_read_time = NULL;
+  dec_conf.hw_250MHz_dec_time = NULL;
+#endif
   dec_conf.Zc = p_decParams->Z;
   dec_conf.BG = p_decParams->BG;
   //select correct BG 
@@ -295,15 +301,18 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
 
 int32_t nrLDPC_coding_init(void)
 {
+  /*
+  Don't use it for now, could be useful in the future
   paramdef_t LoaderParams[] = {
-      {"num_threads_prepare", NULL, 0, .iptr = &num_threads_prepare_max, .defintval = 0, TYPE_INT, 0, NULL},
-      {"user_device", NULL, 0, .strptr = &user_device, .defstrval = DEVICE_NAME_DEFAULT_USER, TYPE_STRING, 0, NULL},
-      {"enc_read_device", NULL, 0, .strptr = &enc_read_device, .defstrval = DEVICE_NAME_DEFAULT_ENC_READ, TYPE_STRING, 0, NULL},
-      {"enc_write_device", NULL, 0, .strptr = &enc_write_device, .defstrval = DEVICE_NAME_DEFAULT_ENC_WRITE, TYPE_STRING, 0, NULL},
-      {"dec_read_device", NULL, 0, .strptr = &dec_read_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_READ, TYPE_STRING, 0, NULL},
-      {"dec_write_device", NULL, 0, .strptr = &dec_write_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_WRITE, TYPE_STRING, 0, NULL}};
+    {"num_threads_prepare", NULL, 0, .iptr = &num_threads_prepare_max, .defintval = 0, TYPE_INT, 0, NULL},
+    {"user_device", NULL, 0, .strptr = &user_device, .defstrval = DEVICE_NAME_DEFAULT_USER, TYPE_STRING, 0, NULL},
+    {"enc_read_device", NULL, 0, .strptr = &enc_read_device, .defstrval = DEVICE_NAME_DEFAULT_ENC_READ, TYPE_STRING, 0, NULL},
+    {"enc_write_device", NULL, 0, .strptr = &enc_write_device, .defstrval = DEVICE_NAME_DEFAULT_ENC_WRITE, TYPE_STRING, 0, NULL},
+    {"dec_read_device", NULL, 0, .strptr = &dec_read_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_READ, TYPE_STRING, 0, NULL},
+    {"dec_write_device", NULL, 0, .strptr = &dec_write_device, .defstrval = DEVICE_NAME_DEFAULT_DEC_WRITE, TYPE_STRING, 0, NULL}};
   //config_get(config_get_if(), LoaderParams, sizeofArray(LoaderParams), "nrLDPC_coding_xdma");
   //AssertFatal(num_threads_prepare_max != 0, "nrLDPC_coding_xdma.num_threads_prepare was not provided");
+    */
 #if DO_INTERNAL_TIME_MEASUREMENT  
   memset(&internal_time_stats[0][0], 0, sizeof(internal_time_stats));
   timer_idx = 0;

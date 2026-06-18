@@ -325,7 +325,6 @@ int32_t nrLDPC_coding_shutdown(void)
   varArray_t* vr = initVarArray(1, sizeof(double));
   *((double*)dataArray(vr)) = 0;
   vr->size++;
-  //printf("K %u, Qm: %u, MCS: %u, CBs: %u\n", K4MS, Qm4MS, MCS4MS, CBs4MS);
   //Output internal timestats to file
   for(size_t i = 0; i < NUMB_OF_TOTAL_TIME_POINTS; ++i)
   {
