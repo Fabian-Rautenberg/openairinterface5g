@@ -30,7 +30,7 @@
 #else
 #define PRINT_CRC_CHECK(a)
 #endif
-#define USE_PARITY_OPTIMIZATION (true)
+#define USE_PARITY_OPTIMIZATION (false)
 #define USE_OUTPUT_PARALLELIZATION (false)
 #define USE_EXACT_BG (true)  
 
@@ -46,7 +46,6 @@
 #define inMicroS(a) (((double)(a))/(get_cpu_freq_GHz()*1000.0))
 #include "SIMULATION/LTE_PHY/common_sim.h"
 #endif
-
 
 // Global var to limit the rework of the dirty legacy code
 int num_threads_prepare_max = 0;
@@ -773,7 +772,8 @@ static inline void pack_16bits_to_8bits_range(const int16_t* const src_ptr, int8
       dst_ptr[i] = (int8_t)tmp;
     }
   }
-}
+} 
+
 
 /*!
  * \fn nr_ulsch_FPGA_decoding_prepare_blocks(void *args)

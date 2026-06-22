@@ -77,6 +77,8 @@ char allocated_write[24 * 1024] __attribute__((aligned(4096)));
 char allocated_read[24 * 1024 * 3] __attribute__((aligned(4096)));
 double cpu_freq_GHz;
 
+void decoder_reset();
+
 static pthread_mutex_t hw_rw_lock;
 
 // dma_from_device.c
@@ -791,9 +793,7 @@ int32_t test_dma_init(devices_t devices)
   map_base = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   AssertFatal(map_base != (void*)-1, "MEMORY MAP AT ADDRESS %p FAILED\n", map_base);
 
-  *(volatile uint32_t*)(map_base + OFFSET_RESET) |= (1 << 8);
-  usleep(10);
-  *(volatile uint32_t*)(map_base + OFFSET_RESET) &= ~(1 << 8);
+  decoder_reset();
 
   cpu_freq_GHz = get_cpu_freq_GHz();
 #if DO_INTERNAL_TIME_MEASUREMENT
@@ -810,9 +810,7 @@ int32_t test_dma_init(devices_t devices)
 void dma_close()
 {
   pthread_mutex_destroy(&hw_rw_lock);
-  *(volatile uint32_t*)(map_base + OFFSET_RESET) |= (1 << 8);
-  usleep(10);
-  *(volatile uint32_t*)(map_base + OFFSET_RESET) &= ~(1 << 8);
+  decoder_reset();
   munmap(map_base, MAP_SIZE);
   if(fd_dec_write > 0)
     close(fd_dec_write);
@@ -1004,3 +1002,9 @@ int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_con
   return numb_of_iter_or_err;
 }
 
+void decoder_reset(){
+  *(volatile uint32_t*)(map_base + OFFSET_RESET) |= (1 << 8);
+  usleep(10);
+  *(volatile uint32_t*)(map_base + OFFSET_RESET) &= ~(1 << 8);
+  usleep(10);
+}
