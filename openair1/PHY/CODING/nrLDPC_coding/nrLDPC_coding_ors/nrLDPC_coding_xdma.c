@@ -30,9 +30,10 @@
 #else
 #define PRINT_CRC_CHECK(a)
 #endif
-#define USE_PARITY_OPTIMIZATION (false)
+#define USE_PARITY_OPTIMIZATION (true)
 #define USE_OUTPUT_PARALLELIZATION (false)
 #define USE_EXACT_BG (true)  
+#define DO_DEC_THROUGHPUT_MEASUREMENT (false)
 
 
 #include "nfapi/open-nFAPI/nfapi/public_inc/nfapi_interface.h"
@@ -342,6 +343,16 @@ int32_t nrLDPC_coding_shutdown(void)
       printf("Retransmission idx: %lu\n", j);
       printf("Number of LDPC decoder iteration done: %lu\n", internal_time_stats[i][j].numb_of_decoder_iter);
       printf("Code rate: %u\n", internal_time_stats[i][j].coderate);
+      #if DO_DEC_THROUGHPUT_MEASUREMENT
+      print_meas(&internal_time_stats[i][j].ts_total_decoding_time, "Total decoding time for all CBs distribution SW", NULL, NULL);
+      print_meas(&internal_time_stats[i][j].ts_hw_dec_250MHz_latency, "Total decoding time for all CBs distribution HW", NULL, NULL);
+      const double sw_decoding_time_us = get_time_meas_us(&internal_time_stats[i][j].ts_total_decoding_time);
+      const double hw_decoding_time_us = get_time_meas_us(&internal_time_stats[i][j].ts_hw_dec_250MHz_latency);
+      const double throughput_sw_gbps = (K4MS * CBs4MS) / (sw_decoding_time_us*1e3);
+      const double throughput_hw_gbps = (K4MS * CBs4MS) / (hw_decoding_time_us*1e3);
+      printf("SW measurement throughput: %.3lf Gbps\n", throughput_sw_gbps);
+      printf("HW measurement throughput: %.3lf Gbps\n", throughput_hw_gbps);
+      #else
       printf("Numb of successfully decoded CBs: %u\n", internal_time_stats[i][j].numb_of_successfully_decoded_cb);
       printStatIndent(&internal_time_stats[i][j].total_process_tb_time, "Total TB process time");
       printDistribution(&internal_time_stats[i][j].total_process_tb_time, vr, "Total TB process time distribution");
@@ -367,6 +378,7 @@ int32_t nrLDPC_coding_shutdown(void)
       printDistribution(&internal_time_stats[i][j].ts_prepare_copying_time, vr, "Prepare copying time per CB distribution");
       printStatIndent2(&internal_time_stats[i][j].ts_total_decoding_post_time, "Post decoding time for all CBs");
       printDistribution(&internal_time_stats[i][j].ts_total_decoding_post_time, vr, "Post decoding time for all CBs distribution");
+      #endif
     }
     printf("*********************************************************************************************\n");
     if(invalid_cnt == NUMB_OF_MAX_RETRANSMISSION)
