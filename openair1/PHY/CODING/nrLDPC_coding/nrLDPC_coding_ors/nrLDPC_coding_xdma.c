@@ -143,9 +143,8 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args);
 void nr_ulsch_FPGA_post_decoding_p(void *args);
 static inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_post_decode);
 
-static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint32_t E, const uint32_t Z, const uint32_t Kprime, const uint8_t BG, const bool padded);
-static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F);
-static inline size_t get_Z_padding(const size_t nbits, const uint32_t Z);
+static inline size_t get_number_of_parity_bits(const uint32_t K, const uint32_t R, const uint32_t Kc, const uint32_t Z);
+static inline uint32_t get_CB_offset(const uint32_t K, const uint32_t Kb, const uint32_t R, const uint32_t Kc, const uint32_t Z);
 static inline void pack_16bits_to_8bits_range(const int16_t* const src_ptr, int8_t* const dst_ptr, const size_t dst_range);
 static inline uint8_t get_current_R(const nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters, const size_t current_r);
 static inline int get_current_E(const nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters, const size_t current_r);
@@ -259,10 +258,10 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
   int8_t buffer_in[MAX_IN_DEC_ARRAY_SIZE];
   int8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
 
-  const int N = p_decParams->BG == 2 ? 50 * p_decParams->Z : 66 * p_decParams->Z;
   const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
+  const int KbZ = Kb * p_decParams->Z;
   // filler bits length
-  const int F = Kb * p_decParams->Z - p_decParams->Kprime;
+  const int F = KbZ - p_decParams->Kprime;
   dec_conf.numFillerBits = F;
   start_meas(&time_stats->llr2llrProcBuf);
   //copy all LLRs in internal buffer starting at HEADER_SIZE
@@ -271,10 +270,11 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
   memcpy(&buffer_in[HEADER_SIZE], p_llr, p_decParams->Kprime);
   //set filler bits
   memset(&buffer_in[HEADER_SIZE + p_decParams->Kprime], INT8_MAX, F);
+  const int Kc = p_decParams->BG == 2 ? 52 : 68;
   //copy parity bits
-  const int numb_of_parity_bits = N + 2 * p_decParams->Z - K;
+  const int numb_of_parity_bits = get_number_of_parity_bits(K, p_decParams->R, Kc, p_decParams->Z);
   dec_conf.numb_of_parity_bits_per_CB[0] = numb_of_parity_bits;
-  memcpy(&buffer_in[HEADER_SIZE + Kb * p_decParams->Z], p_llr + K, numb_of_parity_bits);
+  memcpy(&buffer_in[HEADER_SIZE + KbZ], p_llr + KbZ, numb_of_parity_bits);
   stop_meas(&time_stats->llr2llrProcBuf);
   start_meas(&time_stats->llr2bit);
   int32_t niter = nrLDPC_decoder_FPGA_PYM((uint8_t*)&buffer_in[0], (uint8_t*)&buffer_out[0], dec_conf);
@@ -410,6 +410,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   const uint32_t K = TB_params->K;
   //numb of columns in the BG (52 for BG2 and 68 for BG1) -> number of coded words
   const int Kc = TB_params->BG == 2 ? 52 : 68;
+  const uint32_t Z = TB_params->Z;
   int r_offset = 0;
   //number of true information bits; could also include CRC of CB
   const int Kprime = K - TB_params->F;
@@ -450,7 +451,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   MCS4MS = TB_params->mcs;
   CBs4MS = TB_params->C;
 #endif
-  dec_conf.Zc = TB_params->Z;
+  dec_conf.Zc = Z;
   int Kb = 0;
   if(TB_params->BG == 1)
   {
@@ -461,17 +462,17 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   {
 #if USE_EXACT_BG 
     //The following has to be valid K_b * Z_c >= K'
-    if(6 * TB_params->Z >= Kprime)
+    if(6 * Z >= Kprime)
     {
       Kb = 6;
       dec_conf.BG = 5;
     }
-    else if(8 * TB_params->Z >= Kprime)
+    else if(8 * Z >= Kprime)
     {
       Kb = 8;
       dec_conf.BG = 4;
     }
-    else if(9 * TB_params->Z >= Kprime)
+    else if(9 * Z >= Kprime)
     {
       Kb = 9;
       dec_conf.BG = 3;
@@ -489,7 +490,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   dec_conf.max_iter = TB_params->max_ldpc_iterations;
   dec_conf.numCB = TB_params->C;
   // input soft bits length, Zc x 66 - length of filler bits
-  dec_conf.numChannelLls = (Kprime - 2 * TB_params->Z) + (Kc * TB_params->Z - K);
+  dec_conf.numChannelLls = (Kprime - 2 * Z) + (Kc * Z - K);
   // filler bits length
   dec_conf.numFillerBits = TB_params->F;
   dec_conf.max_schedule = 0;
@@ -503,7 +504,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   dec_conf.dec_read_device = dec_read_device;
   dec_conf.dec_write_device = dec_write_device;
   //Z_c * (10 or 22) is K; Calculate the number of bits in one CB
-  int out_CBoffset = dec_conf.Zc * bg_len + HEADER_SIZE * 8;
+  int out_CBoffset = Z * bg_len + HEADER_SIZE * 8;
   out_CBoffset = CEIL_UP(out_CBoffset, 128);
   //conv to 8 bit units
   out_CBoffset /= 8;
@@ -601,9 +602,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     for(size_t current_r = r; current_r < (r + r_span); ++current_r)
     {
       const int current_E = get_current_E(TB_params, current_r);
-      const int FF = Kb * TB_params->Z - Kprime;
-      input_CBoffset += get_CB_offset(TB_params->d_to_be_cleared, TB_params->Z, Kc, current_E, FF);
-      dec_conf.numb_of_parity_bits_per_CB[current_r] = get_number_of_parity_bits(TB_params->d_to_be_cleared, current_E, TB_params->Z, Kprime, TB_params->BG, true);
+      const uint32_t current_R = get_current_R(TB_params, current_r);
+      input_CBoffset += get_CB_offset(K, Kb, current_R, Kc, Z);
+      dec_conf.numb_of_parity_bits_per_CB[current_r] = get_number_of_parity_bits(K, current_R, Kc, Z);
       r_offset += current_E;
     }
     task_t t = {.func = &nr_ulsch_FPGA_decoding_prepare_blocks, .args = args};
@@ -702,44 +703,58 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   return 0;
 }
 
-static uint32_t get_CB_offset(const bool d_to_clear, const uint32_t Z, const uint32_t Kc, const uint32_t E, const uint32_t F)
+static inline uint32_t get_CB_offset(const uint32_t K, const uint32_t Kb, const uint32_t R, const uint32_t Kc, const uint32_t Z)
 {
-  uint32_t offset = 0;
-  if(d_to_clear && USE_PARITY_OPTIMIZATION)
-  {
-    //partial parity bits are sent to HW
-    const size_t nbits = E + F + 2 * Z;
-    const size_t padding = get_Z_padding(nbits, Z); //inorder to make parity bits a multiple of Z 
-    offset = padding + nbits + HEADER_SIZE; 
-  }
-  else
-  {
-    offset = Z * Kc + HEADER_SIZE; 
-  }
-  offset = CEIL_UP_16B(offset);
-  return offset;
+  const uint32_t numb_of_parity_bits = get_number_of_parity_bits(K, R, Kc, Z);
+  const uint32_t offset = Kb * Z + numb_of_parity_bits + HEADER_SIZE; //< Kb is used here, because it can be smaller than K
+  const uint32_t offset_16B = CEIL_UP_16B(offset);
+  return offset_16B;
 }
 
-static inline size_t get_Z_padding(const size_t nbits, const uint32_t Z)
+static inline size_t get_number_of_parity_bits(const uint32_t K, const uint32_t R, const uint32_t Kc, const uint32_t Z)
 {
-  return GET_PADDING(nbits, Z);
-}
-
-static inline size_t get_number_of_parity_bits(const bool d_to_clear, const uint32_t E, const uint32_t Z, const uint32_t Kprime, const uint8_t BG, const bool padded)
-{
-  size_t numb_of_parity_bits = 0;
-  if(d_to_clear && USE_PARITY_OPTIMIZATION)
+  //default use all parity bits
+  uint32_t numb_of_parity_bits = Kc * Z - K;
+  //code rate definition: R=K/N=K/(K-2*Z+P)=K/(K-2*Z+N+2*Z-K)=K/N P:numb of parity bits (N+2*Z-K)
+#if USE_PARITY_OPTIMIZATION
+  switch (R)
   {
-    numb_of_parity_bits = E - (Kprime - 2 * Z);
-    const size_t padding = get_Z_padding(numb_of_parity_bits, Z);
-    //make numb of parity bits a multiple of Z
-    numb_of_parity_bits += padded * padding;
+  case 13:
+    //K * 3 - K + 2 * Z;
+    numb_of_parity_bits = 2 * K + 2 * Z;
+    break;
+  case 23:
+    if((K % 2) != 0)
+    {
+      LOG_W(PHY, "K isn't a multiple of 3! K %u\n", K);
+    }
+    else
+    {
+      //numb_of_parity_bits = (3 * K) / 2 - K + 2 * Z;
+      numb_of_parity_bits =  K / 2 + 2 * Z;
+    }
+    break;
+  case 89:
+    if((K % 8) != 0)
+    {
+      LOG_W(PHY, "K isn't a multiple of 8! K: %u", K);
+    }
+    else
+    {
+      //(9 * K) / 8 - K + 2 * Z;
+      numb_of_parity_bits = K / 8 + 2 * Z;
+    }
+    break;
+  case 15:
+    //5 * K - K + 2 * Z;
+    numb_of_parity_bits = 4 * K + 2 * Z;
+    break;
+  default:
+    LOG_W(PHY, "Code rate %u isn't supported!", R);
+    break;
   }
-  else
-  {
-    numb_of_parity_bits = BG == 1 ? 46 * Z : 42 * Z;
-  }
-  return numb_of_parity_bits;
+#endif
+  return numb_of_parity_bits; 
 }
 
 static inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_post_decode)
@@ -799,20 +814,20 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
   args_fpga_decode_prepare_t *arguments = (args_fpga_decode_prepare_t *)args;
   derate_interleave_time_measurement_t *p_time_measurements = arguments->p_ts_derate_deinterleave;
 
-  nrLDPC_TB_decoding_parameters_t *TB_params = arguments->TB_params;
+  const nrLDPC_TB_decoding_parameters_t *TB_params = arguments->TB_params;
 
-  uint8_t Qm = TB_params->Qm;
+  const uint8_t Qm = TB_params->Qm;
 
-  uint8_t BG = TB_params->BG;
-  uint8_t rv_index = TB_params->rv_index;
+  const uint8_t BG = TB_params->BG;
+  const uint8_t rv_index = TB_params->rv_index;
   uint8_t max_ldpc_iterations = TB_params->max_ldpc_iterations;
 
-  uint32_t tbslbrm = TB_params->tbslbrm;
-  uint32_t K = TB_params->K;
-  uint32_t Z = TB_params->Z;
-  uint32_t F = TB_params->F;
+  const uint32_t tbslbrm = TB_params->tbslbrm;
+  const uint32_t K = TB_params->K;
+  const uint32_t Z = TB_params->Z;
+  const uint32_t F = TB_params->F;
 
-  uint32_t C = TB_params->C;
+  const uint32_t C = TB_params->C;
   
   short *ulsch_llr = TB_params->llr;
 
@@ -822,8 +837,8 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
   uint32_t r_span = arguments->r_span;
   int r_offset = arguments->r_offset;
   int input_CBoffset = arguments->input_CBoffset;
-  int Kc = arguments->Kc;
-  int Kprime = arguments->Kprime;
+  const int Kc = arguments->Kc;
+  const int Kprime = arguments->Kprime;
   const int Kb = arguments->Kb;
   const int KbZ = Kb * Z;
   //Filler bits regarding Kb value
@@ -832,7 +847,8 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
   // the function processes r_span blocks starting from block at index r_first in ulsch_llr
   for (uint32_t r = r_first; r < (r_first + r_span); r++) {
     const int E = get_current_E(TB_params, r);
-    const size_t offset = get_CB_offset(TB_params->d_to_be_cleared, Z, Kc, E, FF);
+    const uint32_t R = get_current_R(TB_params, r);
+    const size_t offset = get_CB_offset(K, Kb, R, Kc, Z);
     // ----------------------- FPGA pre process ------------------------
     int8_t *const temp_multi_indata = (int8_t* const)&multi_indata[input_CBoffset + HEADER_SIZE];
     // -----------------------------------------------------------------
@@ -884,16 +900,10 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     memset((&z[0] + Kprime), INT8_MAX, FF * sizeof(int16_t));
     // Move coded bits before filler bits
     memcpy((&z[0] + 2 * Z), local_d, (Kprime - 2 * Z) * sizeof(int16_t));
-    const uint32_t numb_of_parity_bits = Kc * Z - K;
+    const uint32_t numb_of_parity_bits = get_number_of_parity_bits(K, R, Kc, Z);
     // skip filler bits, set paraity bits
     memcpy((&z[0] + KbZ), local_d + (K - 2 * Z), numb_of_parity_bits * sizeof(int16_t));
-    size_t numb_to_copy = KbZ + numb_of_parity_bits;
-    if(TB_params->d_to_be_cleared && USE_PARITY_OPTIMIZATION)
-    {
-      numb_to_copy = 2 * Z + E + FF;
-      numb_to_copy += get_Z_padding(numb_to_copy, Z);
-    }
-    numb_to_copy = CEIL_UP_16B(numb_to_copy); 
+    const size_t numb_to_copy = CEIL_UP_16B(KbZ + numb_of_parity_bits);
     pack_16bits_to_8bits_range(&z[0], &temp_multi_indata[0], numb_to_copy);
 #if DO_INTERNAL_TIME_MEASUREMENT
     stop_meas(&arguments->ts_copying_to_FPGA_buff[r]);
