@@ -149,6 +149,8 @@ static inline void pack_16bits_to_8bits_range(const int16_t* const src_ptr, int8
 static inline uint8_t get_current_R(const nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters, const size_t current_r);
 static inline int get_current_E(const nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters, const size_t current_r);
 static inline int get_current_llr_offset(const nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters, const size_t current_r);
+static inline void get_exact_BG_Kb(const uint8_t BG, const uint32_t B, uint32_t* o_Kb, uint8_t* o_BG);
+static inline uint32_t get_B(const uint32_t A);
 
 
 /**
@@ -201,42 +203,10 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
   dec_conf.Zc = p_decParams->Z;
   dec_conf.BG = p_decParams->BG;
   //select correct BG 
-  int Kb = 0;
-  if(p_decParams->BG == 1)
-  {
-    Kb = 22;
-    dec_conf.BG = 1;
-  }
-  else //second BG
-  {
-    #if USE_EXACT_BG 
-    //The following has to be valid K_b * Z_c >= K'
-    if(6 * p_decParams->Z >= p_decParams->Kprime)
-    {
-      Kb = 6;
-      dec_conf.BG = 5;
-    }
-    else if(8 * p_decParams->Z >= p_decParams->Kprime)
-    {
-      Kb = 8;
-      dec_conf.BG = 4;
-    }
-    else if(9 * p_decParams->Z >= p_decParams->Kprime)
-    {
-      Kb = 9;
-      dec_conf.BG = 3;
-    }
-    else // 10 * Z_c >= K'
-    {
-      Kb = 10;
-      dec_conf.BG = 2;
-    }
-    #else
-    Kb = 10;
-    dec_conf.BG = 2;
-    #endif
-    
-  }
+  uint32_t Kb = 0;
+  //because just one CB is decoded here the following is valid K'=B'=B.
+  const uint32_t B = p_decParams->Kprime;
+  get_exact_BG_Kb(p_decParams->BG, B, &Kb, &dec_conf.BG);
   dec_conf.max_iter = min(max(p_decParams->numMaxIter, NUMB_OF_MIN_DEC_ITER), NUMB_OF_MAX_DEC_ITER);
   dec_conf.numCB = 1; 
   // input soft bits length; not sure if calculation is correct
@@ -274,7 +244,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
   //copy parity bits
   const int numb_of_parity_bits = get_number_of_parity_bits(K, p_decParams->R, Kc, p_decParams->Z);
   dec_conf.numb_of_parity_bits_per_CB[0] = numb_of_parity_bits;
-  memcpy(&buffer_in[HEADER_SIZE + KbZ], p_llr + KbZ, numb_of_parity_bits);
+  memcpy(&buffer_in[HEADER_SIZE + KbZ], p_llr + K, numb_of_parity_bits);
   stop_meas(&time_stats->llr2llrProcBuf);
   start_meas(&time_stats->llr2bit);
   int32_t niter = nrLDPC_decoder_FPGA_PYM((uint8_t*)&buffer_in[0], (uint8_t*)&buffer_out[0], dec_conf);
@@ -407,6 +377,7 @@ int32_t nrLDPC_coding_encoder(void)
 int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int slot_rx, tpool_t *ldpc_threadPool)
 {
   DevAssert(TB_params->C <= MAX_CB);
+  const uint32_t B = get_B(TB_params->A);
   const uint32_t K = TB_params->K;
   //numb of columns in the BG (52 for BG2 and 68 for BG1) -> number of coded words
   const int Kc = TB_params->BG == 2 ? 52 : 68;
@@ -420,7 +391,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   static uint8_t multi_indata[MAX_INPUT_FPGA_SIZE] __attribute__((aligned(PAGE_SIZE))); // FPGA input data
   static uint8_t multi_outdata[MAX_OUTPUT_FPGA_SIZE] __attribute__((aligned(PAGE_SIZE))); // FPGA output data
   //maximum possible K_b value
-  int bg_len = TB_params->BG == 1 ? 22 : 10;
+  const int bg_len = TB_params->BG == 1 ? 22 : 10;
 
   int input_CBoffset = 0;
 
@@ -452,41 +423,8 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   CBs4MS = TB_params->C;
 #endif
   dec_conf.Zc = Z;
-  int Kb = 0;
-  if(TB_params->BG == 1)
-  {
-    Kb = 22;
-    dec_conf.BG = 1;
-  }
-  else //second BG
-  {
-#if USE_EXACT_BG 
-    //The following has to be valid K_b * Z_c >= K'
-    if(6 * Z >= Kprime)
-    {
-      Kb = 6;
-      dec_conf.BG = 5;
-    }
-    else if(8 * Z >= Kprime)
-    {
-      Kb = 8;
-      dec_conf.BG = 4;
-    }
-    else if(9 * Z >= Kprime)
-    {
-      Kb = 9;
-      dec_conf.BG = 3;
-    }
-    else // 10 * Z_c >= K'
-    {
-      Kb = 10;
-      dec_conf.BG = 2;
-    }
-#else
-    Kb = 10;
-    dec_conf.BG = 2;
-#endif 
-  }
+  uint32_t Kb = 0;
+  get_exact_BG_Kb(TB_params->BG, B, &Kb, &dec_conf.BG);
   dec_conf.max_iter = TB_params->max_ldpc_iterations;
   dec_conf.numCB = TB_params->C;
   // input soft bits length, Zc x 66 - length of filler bits
@@ -936,3 +874,47 @@ static inline int get_current_llr_offset(const nrLDPC_TB_decoding_parameters_t *
     return current_r * nrLDPC_TB_decoding_parameters->E;
   return nrLDPC_TB_decoding_parameters->first_rE2 * nrLDPC_TB_decoding_parameters->E + (current_r - nrLDPC_TB_decoding_parameters->first_rE2) * nrLDPC_TB_decoding_parameters->E2;
 }
+
+static inline uint32_t get_B(const uint32_t A)
+{
+  return lenWithCrc(0, A);
+}
+
+static inline void get_exact_BG_Kb(const uint8_t BG, const uint32_t B, uint32_t* o_Kb, uint8_t* o_BG)
+{
+  switch (BG)
+  {
+    case 1:
+    *o_BG = 1;
+    *o_Kb = 22;
+    break;
+    case 2:
+#if USE_EXACT_BG
+    if(B > 640)
+    {
+      *o_Kb = 10;
+      *o_BG = 2;
+    }
+    else if(B > 560)
+    {
+      *o_Kb = 9;
+      *o_BG = 3;
+    }
+    else if(B > 192)
+    {
+      *o_Kb = 8;
+      *o_BG = 4;
+    }
+    else 
+    {
+      *o_Kb = 6;
+      *o_BG = 5;
+    }
+#else
+    *o_Kb = 10;
+    *o_BG = 2;
+#endif
+    break;
+  }
+}
+
