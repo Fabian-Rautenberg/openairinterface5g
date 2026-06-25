@@ -127,8 +127,12 @@ typedef struct args_fpga_post_decode_s {
   uint32_t r_first; /*!< index of the first block to be prepared within this function */
   uint32_t r_span; /*!< number of blocks to be prepared within this function */
   int output_CBoffset; /*!< */
-  uint8_t *multi_outdata; /*!< pointer to the head of the block destination array that is received from FPGA decoding */
+  const uint8_t *multi_outdata; /*!< pointer to the head of the block destination array that is received from FPGA decoding */
+  uint8_t* dst_c; /*!< pointer to the head of the destination array, where FPGA buffer should be copied to */
+  int KbZ;
   int K;
+  
+  bool check_crc;
   int length_dec;
   uint8_t crc_type;
   task_ans_t *ans; /*!< pointer to the answer that is used by thread pool to detect job completion */
@@ -226,7 +230,7 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
   #define MAX_IN_DEC_ARRAY_SIZE (OAI_UL_LDPC_MAX_NUM_LLR + HEADER_SIZE)
   #define MAX_OUT_DEC_ARRAY_SIZE (MAX_CB_SIZE_IN_BYTE_UNITS + HEADER_SIZE)
   int8_t buffer_in[MAX_IN_DEC_ARRAY_SIZE];
-  int8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
+  uint8_t buffer_out[MAX_OUT_DEC_ARRAY_SIZE];
 
   const int K = p_decParams->BG == 2 ? 10 * p_decParams->Z : 22 * p_decParams->Z;
   const int KbZ = Kb * p_decParams->Z;
@@ -247,11 +251,21 @@ int32_t LDPCdecoder(t_nrLDPC_dec_params *p_decParams, int8_t *p_llr, uint8_t *p_
   memcpy(&buffer_in[HEADER_SIZE + KbZ], p_llr + K, numb_of_parity_bits);
   stop_meas(&time_stats->llr2llrProcBuf);
   start_meas(&time_stats->llr2bit);
-  int32_t niter = nrLDPC_decoder_FPGA_PYM((uint8_t*)&buffer_in[0], (uint8_t*)&buffer_out[0], dec_conf);
+  int32_t niter = nrLDPC_decoder_FPGA_PYM((uint8_t*)&buffer_in[0], &buffer_out[0], dec_conf);
   stop_meas(&time_stats->llr2bit);
   start_meas(&time_stats->llrRes2llrOut);
   //copy into out buffer
-  memcpy(p_out, &buffer_out[HEADER_SIZE], K / 8);
+  const args_fpga_post_decode_t post_decode_arg = {
+    .r_first = 0,
+    .KbZ = Kb * p_decParams->Z,
+    .r_span = 1,
+    .output_CBoffset = 0,
+    .multi_outdata = &buffer_out[0],
+    .check_crc = false,
+    .dst_c = p_out,
+    .K = K
+  };
+  nr_ulsch_FPGA_post_decoding_s(&post_decode_arg);
   stop_meas(&time_stats->llrRes2llrOut);
   stop_meas(&time_stats->total);
   if(p_decParams->check_crc != NULL)
@@ -470,7 +484,7 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   fptr_ldpc = fopen("../../../cmake_targets/log/ulsim_ldpc_output.txt", "w");
   // ===================================
 #endif
-  //K' = ((A+L)+C*L)/C (TODO: cross check it with their Kprime value)
+  //K' = ((A+L)+C*L)/C 
   const int length_dec = lenWithCrc(TB_params->C, TB_params->A);
   //Either CRC 24 or 16
   const uint8_t crc_type = crcType(TB_params->C, TB_params->A);
@@ -601,10 +615,13 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     post_decode_args[r].crc_type = crc_type;
     post_decode_args[r].length_dec = length_dec;
     post_decode_args[r].K = K;
+    post_decode_args[r].KbZ = Kb * Z;
     post_decode_args[r].r_span = r_span;
     post_decode_args[r].TB_params = TB_params;
     post_decode_args[r].output_CBoffset = out_CBoffset;
     post_decode_args[r].multi_outdata = &multi_outdata[0];
+    post_decode_args[r].check_crc = true;
+    post_decode_arg[r].dst_c = TB_params->c;
     task_t t = {.func = &nr_ulsch_FPGA_post_decoding_p, .args = &post_decode_args[r]};
     pushTpool(ldpc_threadPool, t);
     r += r_span;
@@ -615,11 +632,14 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     .r_first = 0,
     .crc_type = crc_type,
     .length_dec = length_dec,
+    .KbZ = Kb * Z,
     .K = K,
     .r_span = TB_params->C,
     .TB_params = TB_params,
     .output_CBoffset = out_CBoffset,
-    .multi_outdata = &multi_outdata[0]
+    .multi_outdata = &multi_outdata[0],
+    .check_crc = true,
+    .dst_c = TB_params->c
   };
   nr_ulsch_FPGA_post_decoding_s(&post_decode_arg);
 #endif
@@ -698,15 +718,33 @@ static inline size_t get_number_of_parity_bits(const uint32_t K, const uint32_t 
 static inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_post_decode)
 {
   const uint32_t r_end = args_post_decode->r_first + args_post_decode->r_span;
+  const int KbZ = args_post_decode->KbZ;
   const int K = args_post_decode->K;
-  const size_t cK = K / 8;
+  const int K_diff = K - KbZ;
+  const size_t cK = KbZ / 8;
+  const size_t rem_cK = KbZ % 8;
+  uint8_t* dst_c = args_post_decode->dst_c;
   for(uint32_t r = args_post_decode->r_first; r < r_end; r++) 
   {
-    uint8_t* local_c = args_post_decode->TB_params->c + r * cK;
+    uint8_t* local_c = dst_c + r * cK;
     const uint8_t* CB_out_ptr = &args_post_decode->multi_outdata[r * args_post_decode->output_CBoffset + HEADER_SIZE];
     memcpy(local_c, CB_out_ptr, cK);
-    const bool crc_successful = check_crc(local_c, args_post_decode->length_dec, args_post_decode->crc_type);  
-    args_post_decode->TB_params->decodeSuccess[r] = crc_successful;
+    if(rem_cK != 0)
+    {
+      //set last bits
+      const uint8_t b0 = CB_out_ptr[cK];
+      local_c[cK] = 0;
+      local_c[cK] |= (b0 & ((1 << rem_cK) - 1));
+    }
+    //set K_diff bits to zero
+    const size_t ck_8 = cK + (rem_cK > 0);
+    memset(local_c + ck_8, 0, K_diff / 8);
+
+    if(args_post_decode->check_crc)
+    {
+      const bool crc_successful = check_crc(local_c, args_post_decode->length_dec, args_post_decode->crc_type);  
+      args_post_decode->TB_params->decodeSuccess[r] = crc_successful;
+    }
   }
 }
 
@@ -827,8 +865,6 @@ void nr_ulsch_FPGA_decoding_prepare_blocks(void *args)
     } else {
       stop_meas(&p_time_measurements[r].ts_rate_unmatch);
     }
-    uint8_t* local_c = TB_params->c + r * (K / 8);
-    memset(local_c, 0, K / 8);
 #if DO_INTERNAL_TIME_MEASUREMENT
     start_meas(&arguments->ts_copying_to_FPGA_buff[r]);
 #endif
