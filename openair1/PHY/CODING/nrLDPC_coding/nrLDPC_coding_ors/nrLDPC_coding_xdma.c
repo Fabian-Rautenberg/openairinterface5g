@@ -683,7 +683,7 @@ static inline size_t get_number_of_parity_bits(const uint32_t K, const uint32_t 
   case 23:
     if((K % 2) != 0)
     {
-      LOG_W(PHY, "K isn't a multiple of 3! K %u\n", K);
+      LOG_W(PHY, "K isn't a multiple of 2! K %u\n", K);
     }
     else
     {
@@ -711,7 +711,8 @@ static inline size_t get_number_of_parity_bits(const uint32_t K, const uint32_t 
     break;
   }
 #endif
-  return numb_of_parity_bits; 
+  const uint32_t numb_of_parity_bits_ceiled = CEIL_UP(numb_of_parity_bits, Z);
+  return numb_of_parity_bits_ceiled; 
 }
 
 static inline void nr_ulsch_FPGA_post_decoding_s(const args_fpga_post_decode_t* args_post_decode)
