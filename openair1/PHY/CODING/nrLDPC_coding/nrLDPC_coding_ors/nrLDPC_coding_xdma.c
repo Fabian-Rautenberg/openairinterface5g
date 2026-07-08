@@ -311,7 +311,7 @@ int32_t nrLDPC_coding_shutdown(void)
   vr->size++;
   printf("K %u, Qm: %u, MCS: %u, CBs: %u\n", K4MS, Qm4MS, MCS4MS, CBs4MS);
   //Output internal timestats to file
-  for(size_t i = 0; i < timer_idx; ++i)
+  for(size_t i = 0; i < NUMB_OF_TOTAL_TIME_POINTS; ++i)
   {
     printf("Total measurement IDX %lu:\n", i);
     int invalid_cnt = 0;
@@ -412,6 +412,9 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
 #if DO_INTERNAL_TIME_MEASUREMENT
   //setup timer stuff
   static uint32_t local_trial_cntr = 0;
+  static uint8_t local_retransmission_counter = 0;
+  const uint8_t current_retransmission_counter = local_retransmission_counter;
+  local_retransmission_counter = (local_retransmission_counter + 1) % NUMB_OF_MAX_RETRANSMISSION;
   const uint32_t current_timer_idx = timer_idx;
   const uint32_t current_retransmission_idx = TB_params->rv_index;
   internal_time_stats_t* current_time_stat = &internal_time_stats[current_timer_idx][current_retransmission_idx];
@@ -424,12 +427,6 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
   dec_conf.h2c_latency    = &current_time_stat->ts_h2c_latency;
   time_stats_t prepare_copying_time[MAX_CB] = {};
   local_trial_cntr += TB_params->rv_index == 0; //< assuming first transmission starts with rv_index 0 and it isn't repeated anymore
-  if(local_trial_cntr == NUMBER_OF_TRIALS_PER_SNR)
-  {
-    local_trial_cntr = 0;
-    if(timer_idx < NUMB_OF_TOTAL_TIME_POINTS)
-      timer_idx++;
-  }
   K4MS = K;
   Qm4MS = TB_params->Qm;
   MCS4MS = TB_params->mcs;
@@ -654,6 +651,16 @@ int decoder_xdma(nrLDPC_TB_decoding_parameters_t *TB_params, int frame_rx, int s
     *TB_params->processedSegments += TB_params->decodeSuccess[r];
   }
 #if DO_INTERNAL_TIME_MEASUREMENT
+  //Check if last SNR trail is reached and if there is space in the timer buffer
+  if(local_trial_cntr == NUMBER_OF_TRIALS_PER_SNR && timer_idx < NUMB_OF_TOTAL_TIME_POINTS)
+  {
+    //Either the number of maximum retransmission is reached or in the last trail for the current SNR and retransmission idx all CBs could be sucessfully decoded 
+    if((current_retransmission_counter == (NUMB_OF_MAX_RETRANSMISSION - 1) || *TB_params->processedSegments == TB_params->C))
+    {
+      local_trial_cntr = 0;
+      timer_idx++;
+    }
+  }
   current_time_stat->numb_of_successfully_decoded_cb = *TB_params->processedSegments;
   stop_meas(&current_time_stat->total_process_tb_time);
 #endif 
