@@ -66,6 +66,31 @@
 #include "common/utils/assertions.h"
 #include "common/utils/nr/nr_common.h"
 
+#define AXI_TIMER_CTRL_STAT_OFFSET (0x0U)
+#define AXI_TIMER_LOAD_REG_OFFSET0 (0x4U)
+#define AXI_TIMER_LOAD_REG_OFFSET1 (0x14U)
+
+#define AXI_TIMER_MODE_BIT_IDX (0)
+#define AXI_TIMER_UP_DOWN_CNTR_BIT_IDX (1)
+#define AXI_TIMER_CAPT_SRC_BIT_IDX (3)
+#define AXI_TIMER_HOLD_TIMER_BIT_IDX (4)
+#define AXI_TIMER_LOAD_TIMER_BIT_IDX (5)
+#define AXI_TIMER_ENABLE_TIMER_BIT_IDX (7)
+#define AXI_TIMER_ENABLE_ALL_TIMER_BIT_IDX (10)
+
+#define AXI_TIMER_CAPTURE_MODE (1 << AXI_TIMER_MODE_BIT_IDX)
+#define AXI_TIMER_UP_COUNTER (~(1 << AXI_TIMER_UP_DOWN_CNTR_BIT_IDX))
+#define AXI_TIMER_ENABLE_EXT_CAPT (1 << AXI_TIMER_CAPT_SRC_BIT_IDX)
+#define AXI_TIMER_ENABLE_AUTO_RELOAD (1 << AXI_TIMER_HOLD_TIMER_BIT_IDX)
+#define AXI_TIMER_DISABLE_AUTO_RELOAD (~(AXI_TIMER_ENABLE_AUTO_RELOAD))
+#define AXI_TIMER_ENABLE_LOAD_TIMER (1 << AXI_TIMER_LOAD_TIMER_BIT_IDX)
+#define AXI_TIMER_DISABLE_LOAD_TIMER (~(AXI_TIMER_ENABLE_LOAD_TIMER))
+#define AXI_TIMER_ENABLE_TIMER (1 << AXI_TIMER_ENABLE_TIMER_BIT_IDX)
+#define AXI_TIMER_DISABLE_TIMER (~(AXI_TIMER_ENABLE_TIMER))
+#define AXI_TIMER_ENABLE_ALL_TIMER (1 << AXI_TIMER_ENABLE_ALL_TIMER_BIT_IDX)
+
+#define OFFSET_TO_REG(OFFSET, TYPE) ((OFFSET)/(sizeof(TYPE)))
+
 typedef unsigned long long U64;
 void* map_base;
 int fd = -1;
@@ -705,16 +730,16 @@ void init_hw_timer(const xdma_timer_t timer)
   volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + offset);
   for(uint32_t i = 0; i < 2; ++i)
   {
-    base_hw_addr[i * 4 + 1] = 0;
-    base_hw_addr[i * 4] |= 1U;
-    base_hw_addr[i * 4] &= ~(1U << 1);
-    base_hw_addr[i * 4] |= 1U << 3;
-    base_hw_addr[i * 4] &= ~(1U << 4);
-    base_hw_addr[i * 4] |= (1U << 5);
-    base_hw_addr[i * 4] &= ~(1U << 5);
+    base_hw_addr[i * 4 + OFFSET_TO_REG(AXI_TIMER_LOAD_REG_OFFSET0, uint32_t)] = 0;
+    base_hw_addr[i * 4] |= AXI_TIMER_CAPTURE_MODE;
+    base_hw_addr[i * 4] &= AXI_TIMER_UP_COUNTER;
+    base_hw_addr[i * 4] |= AXI_TIMER_ENABLE_EXT_CAPT;
+    base_hw_addr[i * 4] &= AXI_TIMER_DISABLE_AUTO_RELOAD;
+    base_hw_addr[i * 4] |= AXI_TIMER_ENABLE_LOAD_TIMER;
+    base_hw_addr[i * 4] &= AXI_TIMER_DISABLE_LOAD_TIMER;
     if(i == 1)
     {
-      base_hw_addr[i * 4] |= (1 << 4);
+      base_hw_addr[i * 4] |= AXI_TIMER_ENABLE_AUTO_RELOAD;
     }
   }
 }
@@ -725,27 +750,27 @@ void start_hw_timer(const xdma_timer_t timer)
   volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + offset);
   for(uint32_t i = 0; i < 2; ++i)
   {
-    base_hw_addr[i * 4] &= ~(1U << 7);
-    base_hw_addr[i * 4 + 1] = 0;
-    base_hw_addr[i * 4] |= (1U << 5);
-    base_hw_addr[i * 4] &= ~(1U << 5);
+    base_hw_addr[i * 4] &= AXI_TIMER_DISABLE_TIMER;
+    base_hw_addr[i * 4 + OFFSET_TO_REG(AXI_TIMER_LOAD_REG_OFFSET0, uint32_t)] = 0;
+    base_hw_addr[i * 4] |= AXI_TIMER_ENABLE_LOAD_TIMER;
+    base_hw_addr[i * 4] &= AXI_TIMER_DISABLE_LOAD_TIMER;
   }
   //enable all timers
-  base_hw_addr[0] |= (1 << 10);
+  base_hw_addr[0] |= AXI_TIMER_ENABLE_ALL_TIMER;
 }
 
 uint32_t get_hw_valid_ticks(const xdma_timer_t timer)
 {
   const uint32_t offset = GET_TIMER_OFFSET(timer);
   volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + offset);
-  return base_hw_addr[1];
+  return base_hw_addr[OFFSET_TO_REG(AXI_TIMER_LOAD_REG_OFFSET0, uint32_t)];
 }
 
 uint32_t get_hw_dec_latency_ticks(const xdma_timer_t timer)
 {
   const uint32_t offset = GET_TIMER_OFFSET(timer);
   volatile uint32_t* base_hw_addr =  (volatile uint32_t*)(((uint8_t*)map_base) + offset);
-  const uint32_t end = base_hw_addr[5];
+  const uint32_t end = base_hw_addr[OFFSET_TO_REG(AXI_TIMER_LOAD_REG_OFFSET1, uint32_t)];
   const uint32_t start = get_hw_valid_ticks(timer);
   return end - start;
 }
