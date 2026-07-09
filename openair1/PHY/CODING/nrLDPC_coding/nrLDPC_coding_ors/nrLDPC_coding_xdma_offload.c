@@ -723,7 +723,7 @@ out:
 
   return rc;
 }
-
+#if DO_INTERNAL_TIME_MEASUREMENT
 void init_hw_timer(const xdma_timer_t timer)
 {
   const uint32_t offset = GET_TIMER_OFFSET(timer);
@@ -774,6 +774,7 @@ uint32_t get_hw_dec_latency_ticks(const xdma_timer_t timer)
   const uint32_t start = get_hw_valid_ticks(timer);
   return end - start;
 }
+#endif
 
 int32_t test_dma_init(devices_t devices)
 {
@@ -904,6 +905,7 @@ void test_dma_shutdown()
   close(fd);
 }
 
+#if DO_INTERNAL_TIME_MEASUREMENT
 static void conv_hwtime2cputime(const uint32_t hw_ticks, time_stats_t* time, const xdma_timer_t timer)
 {
   const double hw_freq_GHz = timer == AXI_TIMER0 ? 0.25 : 0.4;
@@ -916,6 +918,7 @@ static void conv_hwtime2cputime(const uint32_t hw_ticks, time_stats_t* time, con
   time->p_time = cpu_ticks;
   time->meas_flag = 0;
 }
+#endif
 
 // reg_rx.c
 int nrLDPC_decoder_FPGA_PYM(uint8_t* buf_in, uint8_t* buf_out, DecIFConf dec_conf)
