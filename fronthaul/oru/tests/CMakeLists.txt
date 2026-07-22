@@ -25,10 +25,10 @@ target_link_libraries(test_oru_pcap PRIVATE oru_packet_processor log_headers ${d
 target_include_directories(test_oru_pcap PRIVATE ${dpdk_INCLUDE_DIRS} ${PCAP_INCLUDE_DIRS})
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/run_oru_pcap_test.sh DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
-add_test(NAME test_oru_pcap_1 COMMAND ${CMAKE_CURRENT_BINARY_DIR}/run_oru_pcap_test.sh https://gitlab.eurecom.fr/api/v4/projects/7026/packages/generic/fhi72-pcaps/1.0.0/capture-oai-odu-4x4-273prb-truncated.pcap.xz $<TARGET_FILE:test_oru_pcap> 1090 3 1 6 4 5 9600 4 -- ${DPDK_TEST_ARGS} "--file-prefix=test_oru_pcap_1")
+add_test(NAME test_oru_pcap_1 COMMAND ${CMAKE_CURRENT_BINARY_DIR}/run_oru_pcap_test.sh https://github.com/bpodrygajlo/openairinterface5g/releases/download/fhi72-pcaps/capture-oai-odu-4x4-273prb-truncated.pcap.xz $<TARGET_FILE:test_oru_pcap> 1090 3 1 6 4 5 9600 4 -- ${DPDK_TEST_ARGS} "--file-prefix=test_oru_pcap_1")
 set_property(TEST test_oru_pcap_1 PROPERTY LABELS fronthaul)
 
-add_test(NAME test_oru_pcap_frag COMMAND ${CMAKE_CURRENT_BINARY_DIR}/run_oru_pcap_test.sh https://gitlab.eurecom.fr/api/v4/projects/7026/packages/generic/fhi72-pcaps/1.0.0/capture-oai-odu-4x4-273prb-truncated.pcap.xz $<TARGET_FILE:test_oru_pcap> 1090 3 1 6 4 5 1500 4 -- ${DPDK_TEST_ARGS} "--file-prefix=test_oru_pcap_frag")
+add_test(NAME test_oru_pcap_frag COMMAND ${CMAKE_CURRENT_BINARY_DIR}/run_oru_pcap_test.sh https://github.com/bpodrygajlo/openairinterface5g/releases/download/fhi72-pcaps/capture-oai-odu-4x4-273prb-truncated.pcap.xz $<TARGET_FILE:test_oru_pcap> 1090 3 1 6 4 5 1500 4 -- ${DPDK_TEST_ARGS} "--file-prefix=test_oru_pcap_frag")
 set_property(TEST test_oru_pcap_frag PROPERTY LABELS fronthaul)
 
 add_dependencies(tests test_oru_pcap)

@@ -10,7 +10,6 @@
 #include "common/config/config_userapi.h"
 #include "common/utils/load_module_shlib.h"
 #include "common/ran_context.h"
-#include "radio/COMMON/common_lib.h"
 #include "radio/ETHERNET/if_defs.h"
 #include "PHY/phy_vars.h"
 #include "PHY/phy_extern.h"
@@ -22,6 +21,9 @@
 #include <executables/softmodem-common.h>
 #include <executables/thread-common.h>
 #include "executables/nr-softmodem.h"
+#include "nr-oru.h"
+#include "openair1/PHY/INIT/nr_phy_init.h"
+#include "openair1/SCHED_NR/sched_nr.h"
 
 pthread_cond_t sync_cond;
 pthread_mutex_t sync_mutex;
@@ -33,6 +35,9 @@ int sf_ahead = 4;
 int emulate_rf = 0;
 
 RAN_CONTEXT_t RC;
+
+
+
 int64_t uplink_frequency_offset[MAX_NUM_CCs][4];
 
 void nfapi_setmode(nfapi_mode_t nfapi_mode)
@@ -106,26 +111,15 @@ struct timespec timespec_sub(struct timespec, struct timespec)
   struct timespec t = {0};
   return t;
 };
-
-void perform_symbol_rotation(const int nsymb, const int numerology_index, double f0, c16_t *symbol_rotation)
+void beam_index_allocation(uint16_t fapi_beam_index,
+                           int ant,
+                           int num_ports,
+                           int symbols_per_slot,
+                           int slot,
+                           uint16_t bitmap_symbols,
+                           int num_ant_max,
+                           uint16_t **ant_beam_id_list)
 {
-  return;
-}
-void init_timeshift_rotation(const int ofdm_symbol_size,
-                             const int nb_prefix_samples,
-                             const uint ofdm_offset_divisor,
-                             c16_t *timeshift_symbol_rotation)
-{
-  return;
-};
-int beam_index_allocation(bool das,
-                          int fapi_beam_index,
-                          NR_gNB_COMMON *common_vars,
-                          int slot,
-                          int symbols_per_slot,
-                          int bitmap_symbols)
-{
-  return 0;
 }
 uint16_t get_first_ant_idx(bool das, uint16_t num_ports_beams, uint16_t beam_id, uint16_t fapi_start_port)
 {
@@ -135,6 +129,12 @@ void nr_fill_du(uint16_t N_ZC, const uint16_t *prach_root_sequence_map, uint16_t
 {
   return;
 };
+
+static void sig_handler(int sig_num)
+{
+  oai_exit = 1;
+}
+
 uint16_t nr_du[838];
 
 uint64_t downlink_frequency[MAX_NUM_CCs][4];
@@ -171,6 +171,7 @@ int main(int argc, char **argv)
   printf("About to Init RU threads\n");
 
   lock_memory_to_ram();
+  load_dftslib();
 
   RC.nb_RU = 1;
   RC.ru = malloc(sizeof(RC.ru));
@@ -178,24 +179,77 @@ int main(int argc, char **argv)
   init_NR_RU(config_get_if(), NULL);
 
   RU_t *ru = RC.ru[0];
+  ORU_t oru = {0};
+  oru.ru = ru;
+  int ret = get_oru_options(&oru);
+  AssertFatal(ret == 0, "Cannot configure oru, check your config file/cmdline");
+  ru->numerology = oru.numerology;
+  oru_init_frame_parms(&oru);
+  NR_DL_FRAME_PARMS *fp = ru->nr_frame_parms;
+  nr_dump_frame_parms(fp);
+  init_symbol_rotation(fp);
+  init_timeshift_rotation(fp->ofdm_symbol_size, fp->nb_prefix_samples, fp->ofdm_offset_divisor, fp->timeshift_symbol_rotation);
+  ru->if_south = LOCAL_RF;
+  nr_phy_init_RU(oru.ru);
+  fill_rf_config(ru, ru->rf_config_file);
+  ru->N_TA_offset = set_default_nta_offset(fp->freq_range, fp->samples_per_subframe);
 
-  while (oai_exit == 0)
+  /* set PRACH configuration */
+  nfapi_nr_prach_config_t *prach_config = &ru->config.prach_config;
+  prach_config->prach_ConfigurationIndex.value = oru.prach_config_index;
+  prach_config->num_prach_fd_occasions_list[0].k1.value = oru.prach_msg1_freq;
+  prach_config->prach_sequence_length.value = 1;
+  prach_config->prach_sub_c_spacing.value = 1;
+  prach_config->num_prach_fd_occasions.value = 1;
+
+  reset_meas(&oru.rx_prach);
+  oru.prach_info = get_nr_prach_occasion_info_from_index(oru.prach_config_index, FR1, fp->frame_type);
+  LOG_A(PHY, "PRACH configuration index %d\n", oru.prach_config_index);
+  LOG_A(PHY,
+        "PRACH format %d start_symbol %d duration %d\n",
+        oru.prach_info.format,
+        oru.prach_info.start_symbol,
+        oru.prach_info.N_dur);
+  prepare_prach_item(&oru);
+
+  oru.fronthaul = oru_fh_init(&oru.fh_config);
+  AssertFatal(oru.fronthaul != NULL, "Cannot configure oru fronthaul, check your config file/cmdline");
+
+  LOG_I(PHY, "starting rfdevice\n");
+  ret = openair0_device_load(&ru->rfdevice, &ru->openair0_cfg);
+  AssertFatal(ret == 0, "RU %u: openair0_device_load() ret %d: cannot initialize rfdevice\n", ru->idx, ret);
+  ret = ru->rfdevice.trx_start_func(&ru->rfdevice);
+  AssertFatal(ret == 0, "RU %u: trx_start_func() ret %d: cannot start rfdevice\n", ru->idx, ret);
+
+  threadCreate(&oru.north_read_thread, oru_north_read_thread, (void *)&oru, "north_read_thread", -1, OAI_PRIORITY_RT_MAX);
+  threadCreate(&oru.south_read_thread, oru_south_read_thread, (void *)&oru, "south_read_thread", -1, OAI_PRIORITY_RT_MAX);
+  usleep(1000);
+  oru_fh_start(oru.fronthaul);
+
+  // Signal handler
+  signal(SIGINT, sig_handler);
+
+  while (oai_exit == 0) {
+    oru_fh_print_stats(oru.fronthaul);
     sleep(1);
-  // stop threads
+  }
 
-  kill_NR_RU_proc(0);
+  pthread_join(oru.north_read_thread, NULL);
+  pthread_join(oru.south_read_thread, NULL);
 
-  end_configmodule(uniqCfg);
+  oru_fh_stop(oru.fronthaul);
+
+  if (ru->rfdevice.trx_stop_func) {
+    ru->rfdevice.trx_stop_func(&ru->rfdevice);
+    ru->rfdevice.trx_stop_func = NULL;
+  }
 
   if (ru->rfdevice.trx_end_func) {
     ru->rfdevice.trx_end_func(&ru->rfdevice);
     ru->rfdevice.trx_end_func = NULL;
   }
 
-  if (ru->ifdevice.trx_end_func) {
-    ru->ifdevice.trx_end_func(&ru->ifdevice);
-    ru->ifdevice.trx_end_func = NULL;
-  }
+  end_configmodule(uniqCfg);
 
   logClean();
   printf("Bye.\n");

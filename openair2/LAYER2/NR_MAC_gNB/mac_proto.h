@@ -76,7 +76,7 @@ void schedule_nr_other_sib(module_id_t module_idP,
                            slot_t slot,
                            nfapi_nr_dl_tti_request_t *DL_req,
                            nfapi_nr_tx_data_request_t *TX_req);
-                    
+
 struct NR_SchedulingInfo2_r17* find_sib19_sched_info(const struct NR_SI_SchedulingInfo_v1700*);
 
 void schedule_nr_mib(module_id_t module_idP, frame_t frameP, slot_t slotP, nfapi_nr_dl_tti_request_t *DL_req);
@@ -89,7 +89,18 @@ void nr_schedule_ulsch(module_id_t module_id, frame_t frame, slot_t slot, nfapi_
 /* \brief default UL preprocessor */
 void nr_ulsch_preprocessor(gNB_MAC_INST *nr_mac, post_process_pusch_t *pp_pusch);
 
-/////// Random Access MAC-PHY interface functions and primitives ///////
+int check_sc_fdma_rbsize(long transform_precoding, uint16_t rb);
+
+void nr_mac_pcch_queue_init(NR_COMMON_channels_t *cc);
+void nr_mac_pcch_queue_free(NR_COMMON_channels_t *cc);
+void nr_mac_pcch_enqueue(module_id_t module_id, uint64_t fiveg_s_tmsi, uint16_t ue_id);
+void schedule_nr_pcch(gNB_MAC_INST *gNB_mac,
+                      frame_t frameP,
+                      slot_t slotP,
+                      nfapi_nr_dl_tti_request_t *DL_req,
+                      nfapi_nr_tx_data_request_t *TX_req);
+
+////// Random Access MAC-PHY interface functions and primitives ///////
 
 void nr_schedule_RA(module_id_t module_idP,
                     frame_t frameP,
@@ -190,7 +201,7 @@ int nr_acknack_scheduling(gNB_MAC_INST *mac,
 int get_pdsch_to_harq_feedback(NR_PUCCH_Config_t *pucch_Config,
                                nr_dci_format_t dci_format,
                                uint8_t *pdsch_to_harq_feedback);
-  
+
 int nr_get_pucch_resource(NR_ControlResourceSet_t *coreset,
                           NR_PUCCH_Config_t *pucch_Config,
                           int CCEIndex);
@@ -219,6 +230,8 @@ NR_sched_pdcch_t set_pdcch_structure(gNB_MAC_INST *gNB_mac,
                                      NR_BWP_t *bwp,
                                      NR_Type0_PDCCH_CSS_config_t *type0_PDCCH_CSS_config);
 
+bool is_type0_occasion(NR_ServingCellConfigCommon_t *scc, const NR_Type0_PDCCH_CSS_config_t *type0, int frame, uint32_t slot);
+
 int find_pdcch_candidate(const gNB_MAC_INST *mac,
                          int cc_id,
                          int aggregation,
@@ -234,6 +247,7 @@ void fill_pdcch_vrb_map(gNB_MAC_INST *mac,
                         int first_cce,
                         int aggregation,
                         int beam);
+bool update_rb_mcs_tbs(NR_sched_pdsch_t *pdsch, uint32_t num_total_bytes, uint16_t *vrb_map);
 
 void fill_dci_pdu_rel15(const NR_UE_ServingCell_Info_t *servingCellInfo,
                         const NR_UE_DL_BWP_t *current_DL_BWP,
@@ -468,6 +482,7 @@ bool commit_alloc(const nr_dl_sched_params_t *params, nr_dl_candidate_t *cand);
 // marks scheduled; continues on failure, returns on max_num_ue.
 #define COMMIT_ALLOC(params, cand, rb_start_, rb_size_, mcs_, n_sched) \
   do {                                                                 \
+    (cand)->sched_pdsch.alloc_type = PDSCH_TYPE1;                      \
     (cand)->sched_pdsch.rbStart = (rb_start_);                         \
     (cand)->sched_pdsch.rbSize = (rb_size_);                           \
     (cand)->sched_pdsch.mcs = (mcs_);                                  \

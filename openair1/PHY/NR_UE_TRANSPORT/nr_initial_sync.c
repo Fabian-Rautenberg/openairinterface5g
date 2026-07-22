@@ -12,7 +12,6 @@
 #include "SCHED_NR_UE/defs.h"
 #include "common/utils/nr/nr_common.h"
 
-#include "common_lib.h"
 #include <math.h>
 
 #include "PHY/NR_REFSIG/pss_nr.h"
@@ -333,6 +332,8 @@ static void nr_scan_ssb(void *arg)
       continue;
     }
 
+    ssbInfo->pssCorrAvgPower = search_params.pss_res.avg;
+    ssbInfo->pssCorrPeakPower = search_params.pss_res.peak;
     ssbInfo->ssbOffset = search_params.pss_res.pos - search_params.nb_prefix_samples;
     ssbInfo->nidCell = search_params.sss_res.nid_cell;
 

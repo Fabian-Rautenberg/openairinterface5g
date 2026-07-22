@@ -43,6 +43,8 @@ Options:
    Sets build directory (will be <oai-root>/cmake_targets/<build-dir>/build)
 --build-e2
    Enable the the E2 Agent
+--build-e3
+   Enable the the E3 Agent
 -I | --install-external-packages
    Installs required packages such as LibXML, asn1.1 compiler, ...
    This option will require root password
@@ -143,6 +145,10 @@ function main() {
              CMAKE_CMD="$CMAKE_CMD -DE2_AGENT=ON"
              shift
              ;;
+       --build-e3 )
+             CMAKE_CMD="$CMAKE_CMD -DE3_AGENT=ON"
+             shift
+             ;;
        -I | --install-external-packages)
             INSTALL_EXTERNAL=1
             echo_info "Will install external packages"
@@ -201,6 +207,7 @@ function main() {
             shift;;
        --nrRU)
             NRRU=1
+            CMAKE_CMD="$CMAKE_CMD -DOAI_RU_FRONTHAUL=ON"
             TARGET_LIST="$TARGET_LIST nr-oru"
             echo_info "Will compile NR O-RU"
             shift;;

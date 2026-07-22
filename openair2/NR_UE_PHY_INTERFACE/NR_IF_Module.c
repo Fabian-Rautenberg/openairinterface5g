@@ -54,7 +54,7 @@ void print_ue_mac_stats(const module_id_t mod, const int frame_rx, const int slo
   cur += snprintf(cur, end - cur, "    DL harq: %lu", mac->stats.dl.rounds[0]);
   int nb;
   for (nb = NR_MAX_HARQ_ROUNDS_FOR_STATS - 1; nb > 1; nb--)
-    if (mac->stats.ul.rounds[nb])
+    if (mac->stats.dl.rounds[nb])
       break;
   for (int i = 1; i < nb + 1; i++)
     cur += snprintf(cur, end - cur, "/%lu", mac->stats.dl.rounds[i]);
@@ -136,6 +136,32 @@ static nr_dci_format_t handle_dci(NR_UE_MAC_INST_t *mac, frame_t frame, int slot
     nr_timer_suspension(&mac->ra.response_window_timer);
 
   return nr_ue_process_dci_indication_pdu(mac, frame, slot, dci);
+}
+
+/** @brief Handle PCCH reception on P-RNTI. */
+static int8_t handle_pcch(NR_UE_MAC_INST_t *mac, nr_downlink_indication_t *dl_info, int pdu_id)
+{
+  const fapi_nr_pdsch_pdu_t *pdsch_pdu = &dl_info->rx_ind->rx_indication_body[pdu_id].pdsch_pdu;
+
+  if (!pdsch_pdu->ack_nack || !pdsch_pdu->pdu || pdsch_pdu->pdu_length == 0) {
+    LOG_W(NR_MAC,
+          "[%04d.%02d][UE %d] PCCH RX fail: ack=%d len=%d\n",
+          dl_info->frame,
+          dl_info->slot,
+          mac->ue_id,
+          pdsch_pdu->ack_nack,
+          pdsch_pdu->pdu_length);
+    return 0;
+  }
+
+  LOG_D(NR_MAC,
+        "[%04d.%02d][UE %d] Received PCCH on P-RNTI, forwarding %d bytes to RRC\n",
+        dl_info->frame,
+        dl_info->slot,
+        mac->ue_id,
+        pdsch_pdu->pdu_length);
+  send_pcch_rrc(mac->ue_id, pdsch_pdu->pdu, pdsch_pdu->pdu_length, NULL);
+  return 0;
 }
 
 // L2 Abstraction Layer
@@ -277,6 +303,9 @@ static uint32_t nr_ue_dl_processing(NR_UE_MAC_INST_t *mac, nr_downlink_indicatio
           break;
         case FAPI_NR_RX_PDU_TYPE_DLSCH:
           ret_mask |= (handle_dlsch(mac, dl_info, i)) << FAPI_NR_RX_PDU_TYPE_DLSCH;
+          break;
+        case FAPI_NR_RX_PDU_TYPE_PCCH:
+          ret_mask |= (handle_pcch(mac, dl_info, i)) << FAPI_NR_RX_PDU_TYPE_PCCH;
           break;
         case FAPI_NR_RX_PDU_TYPE_RAR:
           if (!dl_info->rx_ind->rx_indication_body[i].pdsch_pdu.ack_nack) {

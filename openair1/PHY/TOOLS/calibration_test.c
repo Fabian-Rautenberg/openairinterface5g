@@ -107,8 +107,6 @@ int main(int argc, char **argv) {
     .eth_params=NULL,
     //! record player data, definition in record_player.h
     .recplay_state=NULL,
-    /* !brief Indicates if device already initialized */
-    .is_init=0,
     /*!brief Can be used by driver to hold internal structure*/
     .priv=NULL,
     /* Functions API, which are called by the application*/

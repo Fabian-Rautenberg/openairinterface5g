@@ -39,7 +39,6 @@
 #include "common/platform_constants.h"
 #include "common/ran_context.h"
 #include "common/utils/nr/nr_common.h"
-#include "common_lib.h"
 #include "constr_SEQUENCE.h"
 #include "constr_TYPE.h"
 #include "cucp_cuup_if.h"
@@ -96,6 +95,13 @@ mui_t rrc_gNB_mui = 0;
 
 /* Per-transaction max_delays counter to limit retry attempts */
 #define MAX_DELAYS 100
+
+/* C-RNTI range (0001-FFF2) (TS 38.321 Table 7.1-1, Rel-16+) */
+#define NR_C_RNTI_MIN 0x0001
+#define NR_C_RNTI_MAX 0xfff2
+
+/* 5.3.3.3 TS 38.331: Random UE identity mask for 39-bit values */
+#define NR_RRC_RANDOM_VALUE_39_BIT_MASK (0x7fffffffffULL)
 
 /** @brief clone and re-enqueue an NGAP message after delaying
  * delays the ongoing transaction (in msg_p) by setting a timer to wait
@@ -1085,15 +1091,18 @@ static DRB_nGRAN_to_mod_t get_e1_drb_mod_reestablishment(const drb_t *drb, const
   return drb_e1;
 }
 
-/**
- * @brief Notify E1 re-establishment to CU-UP
- */
+/** @brief Re-establish DRB PDCP on CU-UP (TS 38.331 clause 5.3.5.6.5, TS 38.463 bearer mod).
+ * Sends pDCP_Reestablishment and updated KUP keys after KgNB derivation. */
 static void cuup_notify_reestablishment(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue_p)
 {
   // Quit if no CU-UP is associated
   if (!is_cuup_associated(rrc) || !ue_associated_to_cuup(ue_p)) {
     return;
   }
+
+  /* TS 38.331 §5.3.5.6.5: no DRB/PDU session (e.g. after release) means nothing to do. */
+  if (seq_arr_size(&ue_p->drbs) == 0)
+    return;
 
   e1ap_bearer_mod_req_t req = {
       .gNB_cu_cp_ue_id = ue_p->rrc_ue_id,
@@ -1432,11 +1441,20 @@ static const nr_rrc_cell_container_t *get_previous_cell_by_pci_in_du(gNB_RRC_INS
   return rrc_get_cell_by_pci_for_du(&du->cells, pci);
 }
 
+/** @brief Process RRCReestablishmentRequest on CCCH (TS 38.331 clause 5.3.7.4).
+ * On valid UE context, update RNTI and PCell and trigger RRCReestablishment, otherwise
+ * release any old context and send RRCSetup.
+ * @note Context lookup uses c-RNTI only. Out of range PhysCellId or C-RNTI are ignored. */
 static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
                                                  sctp_assoc_t assoc_id,
                                                  const NR_RRCReestablishmentRequest_IEs_t *req,
                                                  const f1ap_initial_ul_rrc_message_t *msg)
 {
+  DevAssert(req);
+  DevAssert(msg);
+  DevAssert(rrc);
+  RETURN_IF_INVALID_ASSOC_ID(assoc_id);
+
   uint64_t random_value = 0;
   const char *scause = get_reestab_cause(req->reestablishmentCause);
   const long physCellId = req->ue_Identity.physCellId;
@@ -1450,6 +1468,18 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
         old_rnti,
         physCellId,
         scause);
+
+  /* Validate PCI range per TS 38.331: PhysCellId (0..1007) */
+  if (physCellId < 0 || physCellId > NR_PHYS_CELL_ID_MAX) {
+    LOG_E(NR_RRC, "Invalid physCellId %ld (valid range: 0-%d), rejecting reestablishment request\n", physCellId, NR_PHYS_CELL_ID_MAX);
+    return;
+  }
+
+  /* TS 38.321 Table 7.1-1: out-of-range C-RNTI, ignore request */
+  if (old_rnti < NR_C_RNTI_MIN || old_rnti > NR_C_RNTI_MAX) {
+    LOG_E(NR_RRC, "C-RNTI %04x out of range (%#04x-%#04x): rejecting RRCReestablishmentRequest\n", old_rnti, NR_C_RNTI_MIN, NR_C_RNTI_MAX);
+    return;
+  }
 
   const nr_rrc_du_container_t *du = get_du_by_assoc_id(rrc, assoc_id);
   if (du == NULL) {
@@ -1467,12 +1497,6 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
     return;
   }
 
-  // Validate C-RNTI range (3GPP TS 38.321 version 15.13.0 Section 7.1 Table 7.1-1)
-  if (old_rnti < 0x1 || old_rnti > 0xffef) {
-    LOG_E(NR_RRC, "NR_RRCReestablishmentRequest c_RNTI %04x range error, fallback to RRC setup\n", old_rnti);
-    goto fallback_rrc_setup;
-  }
-
   if (current_cell->mtc == NULL) {
     // some UEs don't send MeasurementTimingConfiguration, so we don't know the
     // SSB ARFCN and can't do reestablishment. handle it gracefully by doing
@@ -1488,6 +1512,8 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
     return;
   }
 
+  /* TS 38.331 §5.3.7.1: retrieve UE context (C-RNTI + physCellId): if it cannot be
+   * retrieved, respond with RRCSetup (Fig. 5.3.7.1-2). */
   ue_context_p = rrc_gNB_get_ue_context_by_rnti(rrc, assoc_id, old_rnti);
   if (ue_context_p == NULL) {
     // Fallback 1: Try to find UE by RNTI only (re-establishment on different DU scenario)
@@ -1506,6 +1532,15 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
   if (!UE->as_security_active) {
     /* no active security context, need to restart entire connection */
     LOG_E(NR_RRC, "UE requested Reestablishment without activated AS security\n");
+    ngap_cause = NGAP_CAUSE_RADIO_NETWORK_RELEASE_DUE_TO_NGRAN_GENERATED_REASON;
+    goto fallback_rrc_setup;
+  }
+
+  /* TS 38.331 5.3.7.1: requires a retrieved valid UE context. Context without
+   * SRB2 or any DRB is incomplete for re-establishment (UE initiation needs both,
+   * treat as not verified). */
+  if (!UE->Srb[SRB2].Active || seq_arr_size(&UE->drbs) == 0) {
+    LOG_E(NR_RRC, "UE context not valid for re-establishment (no SRB2/DRB), fallback to RRC setup\n");
     ngap_cause = NGAP_CAUSE_RADIO_NETWORK_RELEASE_DUE_TO_NGRAN_GENERATED_REASON;
     goto fallback_rrc_setup;
   }
@@ -1618,7 +1653,7 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
 
 fallback_rrc_setup:
   fill_random(&random_value, sizeof(random_value));
-  random_value = random_value & 0x7fffffffff; /* random value is 39 bits */
+  random_value = random_value & NR_RRC_RANDOM_VALUE_39_BIT_MASK;
 
   ngap_cause_t cause = {.type = NGAP_CAUSE_RADIO_NETWORK, .value = ngap_cause};
   /* request release of the "old" UE in case it exists */
@@ -1631,6 +1666,27 @@ fallback_rrc_setup:
   DevAssert(added);
   rrc_gNB_generate_RRCSetup(0, new, msg->du2cu_rrc_container, msg->du2cu_rrc_container_length);
   return;
+}
+
+static void nr_rrc_count_ss_sinr_dist(gNB_RRC_INST *rrc, const NR_MeasResults_t *mr)
+{
+  if (rrc == NULL || mr == NULL)
+    return;
+  if (mr->measResultServingMOList.list.count == 0 || mr->measResultServingMOList.list.array == NULL)
+    return;
+
+  for (int i = 0; i < mr->measResultServingMOList.list.count; i++) {
+    const NR_MeasResultServMO_t *serv_mo = mr->measResultServingMOList.list.array[i];
+    if (serv_mo == NULL)
+      continue;
+    const struct NR_MeasResultNR__measResult__cellResults *cr =
+        &serv_mo->measResultServingCell.measResult.cellResults;
+    if (cr->resultsSSB_Cell == NULL || cr->resultsSSB_Cell->sinr == NULL)
+      continue;
+    const long encoded = *cr->resultsSSB_Cell->sinr;
+    if (encoded >= 0 && encoded < NR_KPM_SS_SINR_NB_LEVELS)
+      rrc->ss_sinr_cell_dist[encoded]++;
+  }
 }
 
 static void process_Periodical_Measurement_Report(gNB_RRC_UE_t *ue_ctxt, NR_MeasurementReport_t *measurementReport)
@@ -1815,8 +1871,11 @@ static void rrc_gNB_process_MeasurementReport(gNB_RRC_INST *rrc, gNB_RRC_UE_t *U
     return;
   }
 
-  if (report_config->choice.reportConfigNR->reportType.present == NR_ReportConfigNR__reportType_PR_periodical)
-    return process_Periodical_Measurement_Report(UE, measurementReport);
+  if (report_config->choice.reportConfigNR->reportType.present == NR_ReportConfigNR__reportType_PR_periodical) {
+    nr_rrc_count_ss_sinr_dist(rrc, &measurementReport->criticalExtensions.choice.measurementReport->measResults);
+    process_Periodical_Measurement_Report(UE, measurementReport);
+    return;
+  }
 
   if (report_config->choice.reportConfigNR->reportType.present == NR_ReportConfigNR__reportType_PR_eventTriggered)
     return process_Event_Based_Measurement_Report(rrc, UE, report_config->choice.reportConfigNR, measurementReport);
@@ -3490,6 +3549,18 @@ static bool write_rrc_stats(const gNB_RRC_INST *rrc)
   return true;
 }
 
+static void nr_rrc_sample_conn_count(gNB_RRC_INST *rrc)
+{
+  if (rrc == NULL)
+    return;
+  uint32_t count = 0;
+  rrc_gNB_ue_context_t *ue_context_p = NULL;
+  RB_FOREACH(ue_context_p, rrc_nr_ue_tree_s, &rrc->rrc_ue_head)
+    count++;
+  rrc->rrc_conn_count_sum += count;
+  rrc->rrc_conn_count_samples += 1;
+}
+
 void *rrc_gnb_task(void *args_p)
 {
   UNUSED(args_p);
@@ -3529,6 +3600,7 @@ void *rrc_gnb_task(void *args_p)
 
       case TIMER_HAS_EXPIRED:
         if (TIMER_HAS_EXPIRED(msg_p).timer_id == stats_timer_id) {
+          nr_rrc_sample_conn_count(RC.nrrrc[0]);
           if (!write_rrc_stats(RC.nrrrc[0]))
             timer_remove(stats_timer_id);
         } else {
@@ -3756,92 +3828,6 @@ void rrc_gNB_generate_RRCRelease(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
 #ifdef E2_AGENT
   E2_AGENT_SIGNAL_DL_DCCH_RRC_MSG(buffer, size, NR_DL_DCCH_MessageType__c1_PR_rrcRelease);
 #endif
-}
-
-int rrc_gNB_generate_pcch_msg(sctp_assoc_t assoc_id, const NR_SIB1_t *sib1, uint32_t tmsi, uint8_t paging_drx)
-{
-  instance_t instance = 0;
-  const unsigned int Ttab[4] = {32,64,128,256};
-  uint8_t Tc;
-  uint8_t Tue;
-  uint32_t pfoffset;
-  uint32_t N;  /* N: min(T,nB). total count of PF in one DRX cycle */
-  uint32_t Ns = 0;  /* Ns: max(1,nB/T) */
-  uint32_t T;  /* DRX cycle */
-  uint8_t buffer[NR_RRC_BUF_SIZE];
-
-  /* get default DRX cycle from configuration */
-  Tc = sib1->servingCellConfigCommon->downlinkConfigCommon.pcch_Config.defaultPagingCycle;
-
-  Tue = paging_drx;
-  /* set T = min(Tc,Tue) */
-  T = Tc < Tue ? Ttab[Tc] : Ttab[Tue];
-  /* set N = PCCH-Config->nAndPagingFrameOffset */
-  switch (sib1->servingCellConfigCommon->downlinkConfigCommon.pcch_Config.nAndPagingFrameOffset.present) {
-    case NR_PCCH_Config__nAndPagingFrameOffset_PR_oneT:
-      N = T;
-      pfoffset = 0;
-      break;
-    case NR_PCCH_Config__nAndPagingFrameOffset_PR_halfT:
-      N = T/2;
-      pfoffset = 1;
-      break;
-    case NR_PCCH_Config__nAndPagingFrameOffset_PR_quarterT:
-      N = T/4;
-      pfoffset = 3;
-      break;
-    case NR_PCCH_Config__nAndPagingFrameOffset_PR_oneEighthT:
-      N = T/8;
-      pfoffset = 7;
-      break;
-    case NR_PCCH_Config__nAndPagingFrameOffset_PR_oneSixteenthT:
-      N = T/16;
-      pfoffset = 15;
-      break;
-    default:
-      LOG_E(RRC, "[gNB %ld] In rrc_gNB_generate_pcch_msg:  pfoffset error (pfoffset %d)\n",
-            instance, sib1->servingCellConfigCommon->downlinkConfigCommon.pcch_Config.nAndPagingFrameOffset.present);
-      return (-1);
-
-  }
-
-  switch (sib1->servingCellConfigCommon->downlinkConfigCommon.pcch_Config.ns) {
-    case NR_PCCH_Config__ns_four:
-      if(*sib1->servingCellConfigCommon->downlinkConfigCommon.initialDownlinkBWP.pdcch_ConfigCommon->choice.setup->pagingSearchSpace == 0){
-        LOG_E(RRC, "[gNB %ld] In rrc_gNB_generate_pcch_msg:  ns error only 1 or 2 is allowed when pagingSearchSpace is 0\n",
-              instance);
-        return (-1);
-      } else {
-        Ns = 4;
-      }
-      break;
-    case NR_PCCH_Config__ns_two:
-      Ns = 2;
-      break;
-    case NR_PCCH_Config__ns_one:
-      Ns = 1;
-      break;
-    default:
-      LOG_E(RRC, "[gNB %ld] In rrc_gNB_generate_pcch_msg: ns error (ns %ld)\n",
-            instance, sib1->servingCellConfigCommon->downlinkConfigCommon.pcch_Config.ns);
-      return (-1);
-  }
-
-  (void) N; /* not used, suppress warning */
-  (void) Ns; /* not used, suppress warning */
-  (void) pfoffset; /* not used, suppress warning */
-
-  /* Create message for PDCP (DLInformationTransfer_t) */
-  int length = do_NR_Paging(instance, buffer, tmsi);
-
-  if (length == -1) {
-    LOG_I(NR_RRC, "do_Paging error\n");
-    return -1;
-  }
-  // TODO, send message to pdcp
-  (void) assoc_id;
-
-  return 0;
 }
 
 /* F1AP UE Context Management Procedures */

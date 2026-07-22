@@ -28,7 +28,6 @@
 #include <unistd.h>
 
 #include <sys/sysinfo.h>
-#include "radio/COMMON/common_lib.h"
 #include "assertions.h"
 
 /* help strings definition for command line options, used in CMDLINE_XXX_DESC macros and printed when -h option is used */

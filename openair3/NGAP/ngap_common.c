@@ -133,6 +133,14 @@ nssai_t decode_ngap_nssai(const NGAP_S_NSSAI_t *in)
   return nssai;
 }
 
+void encode_ngap_security_capabilities(NGAP_UESecurityCapabilities_t *out, const ngap_security_capabilities_t *in)
+{
+  ENCRALG_TO_BIT_STRING(in->nRencryption_algorithms, &out->nRencryptionAlgorithms);
+  ENCRALG_TO_BIT_STRING(in->eUTRAencryption_algorithms, &out->eUTRAencryptionAlgorithms);
+  INTPROTALG_TO_BIT_STRING(in->nRintegrity_algorithms, &out->nRintegrityProtectionAlgorithms);
+  INTPROTALG_TO_BIT_STRING(in->eUTRAintegrity_algorithms, &out->eUTRAintegrityProtectionAlgorithms);
+}
+
 ngap_security_capabilities_t decode_ngap_security_capabilities(const NGAP_UESecurityCapabilities_t *in)
 {
   ngap_security_capabilities_t out = {0};

@@ -154,6 +154,7 @@ void nr_preprocessor_phytest(gNB_MAC_INST *mac, post_process_pdsch_t *pp_pdsch)
   NR_sched_pdsch_t sched_pdsch = {
       .rbSize = rbSize,
       .rbStart = rbStart,
+      .alloc_type = PDSCH_TYPE1,
       .mcs = target_dl_mcs,
       .R = nr_get_code_rate_dl(target_dl_mcs, dl_bwp->mcsTableIdx),
       .Qm = nr_get_Qm_dl(target_dl_mcs, dl_bwp->mcsTableIdx),

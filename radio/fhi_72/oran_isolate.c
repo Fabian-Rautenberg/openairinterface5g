@@ -37,9 +37,7 @@ typedef struct {
 } oran_eth_state_t;
 
 notifiedFIFO_t oran_sync_fifo;
-#if defined K_RELEASE
 notifiedFIFO_t oran_sync_fifo_prach;
-#endif
 
 int trx_oran_start(openair0_device_t *device)
 {
@@ -48,7 +46,6 @@ int trx_oran_start(openair0_device_t *device)
   oran_eth_state_t *s = device->priv;
 
   // Start ORAN
-#if defined K_RELEASE
   if (xran_timingsource_start() != 0) {
     printf("%s:%d:%s: Start timing source failed ... Exit\n", __FILE__, __LINE__, __FUNCTION__);
     exit(1);
@@ -64,25 +61,16 @@ int trx_oran_start(openair0_device_t *device)
   }
 
   xran_mem_mgr_leak_detector_display(0);
-#endif
 
-#if defined F_RELEASE
-  if (xran_start(s->oran_priv) != 0) {
-    printf("%s:%d:%s: Start ORAN failed ... Exit\n", __FILE__, __LINE__, __FUNCTION__);
-    exit(1);
-  }
-#elif defined K_RELEASE
   for (int32_t port_id = 0; port_id < s->num_ports; port_id++) {
     if (xran_start(((void **)s->oran_priv)[port_id]) != 0) {
       printf("%s:%d:%s: Start ORAN port ID %d failed ... Exit\n", __FILE__, __LINE__, __FUNCTION__, port_id);
       exit(1);
     }
   }
-#endif
 
   printf("Start ORAN. Done\n");
 
-#if defined K_RELEASE
   for (int32_t cc_id = 0; cc_id < s->nCC; cc_id++) {
     for (int32_t port_id = 0; port_id < s->num_ports; port_id++) {
       if (xran_activate_cc(port_id, cc_id) != 0) {
@@ -93,7 +81,6 @@ int trx_oran_start(openair0_device_t *device)
       }
     }
   }
-#endif
 
   return 0;
 }
@@ -102,14 +89,10 @@ void trx_oran_end(openair0_device_t *device)
 {
   printf("ORAN: %s\n", __FUNCTION__);
   oran_eth_state_t *s = device->priv;
-#if defined K_RELEASE
   xran_shutdown(s->oran_priv);
-#endif
   xran_close(s->oran_priv);
-#if defined K_RELEASE
   xran_cleanup();
   xran_mem_mgr_leak_detector_destroy();
-#endif
 }
 
 int trx_oran_stop(openair0_device_t *device)
@@ -117,7 +100,6 @@ int trx_oran_stop(openair0_device_t *device)
   printf("ORAN: %s\n", __FUNCTION__);
   oran_eth_state_t *s = device->priv;
 
-#if defined K_RELEASE
   for (int32_t cc_id = 0; cc_id < s->nCC; cc_id++) {
     for (int32_t port_id = 0; port_id < s->num_ports; port_id++) {
       xran_deactivate_cc(port_id, cc_id);
@@ -125,15 +107,10 @@ int trx_oran_stop(openair0_device_t *device)
   }
 
   xran_timingsource_stop();
-#endif
 
-#if defined F_RELEASE
-  xran_stop(s->oran_priv);
-#elif defined K_RELEASE
   for (int32_t port_id = 0; port_id < s->num_ports; port_id++) {
     xran_stop(((void **)s->oran_priv)[port_id]);
   }
-#endif
 
 #ifdef OAI_MPLANE
   printf("[MPLANE] Stopping M-plane.\n");
@@ -290,11 +267,6 @@ void oran_fh_if4p5_south_in(RU_t *ru, int *frame, int *slot)
 
   /* Secondly, process PRACH packets */
   int f_prach, sl_prach;
-#if defined F_RELEASE
-  // no PRACH callback (no queue) in F release so use the expected combination
-  f_prach = *frame;
-  sl_prach = *slot;
-#endif
   ret = xran_fh_rx_prach_read_slot(ru->gNB_list[0], &ru_info, &f_prach, &sl_prach);
   if (ret != 0) {
     printf("ORAN: %d.%d ORAN_fh_if4p5_south_in ERROR in RX PRACH function \n", f_prach, sl_prach);
@@ -446,9 +418,7 @@ __attribute__((__visibility__("default"))) int transport_init(openair0_device_t 
   // create message queues for ORAN sync
 
   initNotifiedFIFO(&oran_sync_fifo);
-#if defined K_RELEASE
   initNotifiedFIFO(&oran_sync_fifo_prach);
-#endif
 
   eth->e.flags = ETH_RAW_IF4p5_MODE;
   eth->e.compression = NO_COMPRESS;

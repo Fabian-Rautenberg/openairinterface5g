@@ -1715,6 +1715,7 @@ static void nr_generate_Msg2(module_id_t module_idP,
       .pm_index = 0,
       .tb_size = TBS,
       .bwp_info = bwp_info,
+      .alloc_type = PDSCH_TYPE1,
       .rbStart = rbStart,
       .rbSize = rbSize,
       // no of layers 1 and pmi 0 gives only one log antenna port
@@ -2014,6 +2015,7 @@ static void nr_generate_Msg4_MsgB(module_id_t module_idP,
         .bwp_info = bwp_info,
         .rbStart = rbStart,
         .rbSize = rbSize,
+        .alloc_type = PDSCH_TYPE1,
         .ant_port_idx = {.numSpatialStreamIndices = 1,
                          .spatialStreamIndices[0] = nr_mac->radio_config.spatial_stream_index[beam.idx * num_log_ports]}};
 

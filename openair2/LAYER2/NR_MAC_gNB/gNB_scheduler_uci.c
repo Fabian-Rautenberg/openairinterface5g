@@ -604,6 +604,15 @@ static void evaluate_rsrp_report(NR_UE_info_t *UE,
   for (RSRP_report_t *r = rsrp_report->r; r < rsrp_report->r + rsrp_report->nb; r++)
     if (r->resource_id < MAX_NUM_OF_SSB)
       UE->beam_rsrp[r->resource_id] = r->RSRP;
+
+  if (reportQuantity_type == NR_CSI_ReportConfig__reportQuantity_PR_ssb_Index_RSRP) {
+    NR_du_stats_t *du_stats = &RC.nrmac[0]->du_stats;
+    for (RSRP_report_t *r = rsrp_report->r; r < rsrp_report->r + rsrp_report->nb; r++) {
+      const int level = r->RSRP + 157;
+      if (r->resource_id >= 0 && r->resource_id < NR_KPM_NB_SSB && level >= 0 && level < NR_KPM_SS_RSRP_NB_LEVELS)
+        du_stats->ss_rsrp_ssb_dist[r->resource_id][level]++;
+    }
+  }
 }
 
 static void evaluate_cri_report(uint8_t *payload, uint8_t cri_bitlen, int cumul_bits, NR_UE_sched_ctrl_t *sched_ctrl)

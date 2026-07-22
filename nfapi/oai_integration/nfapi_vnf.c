@@ -1747,10 +1747,13 @@ void stop_nr_nfapi_vnf()
   }
 }
 
-void configure_nr_nfapi_vnf(eth_params_t params)
+void configure_nr_nfapi_vnf(const char *vnf_addr, uint16_t vnf_p5_port, uint16_t vnf_p7_port)
 {
 #ifndef ENABLE_AERIAL
   nfapi_setmode(NFAPI_MODE_VNF);
+#else
+  UNUSED(vnf_addr);
+  UNUSED(vnf_p7_port);
 #endif
   vnf_info *vnf = calloc(1, sizeof(vnf_info));
   memset(vnf->p7_vnfs, 0, sizeof(vnf->p7_vnfs));
@@ -1759,22 +1762,21 @@ void configure_nr_nfapi_vnf(eth_params_t params)
   vnf->p7_vnfs[0].aperiodic_timing_enabled = 0;
   vnf->p7_vnfs[0].periodic_timing_period = 1;
   vnf->p7_vnfs[0].config = nfapi_vnf_p7_config_create();
-  AssertFatal(params.remote_portc == 0 && params.remote_portd == 0, "remote ports not used, use 0\n");
 #ifndef ENABLE_AERIAL
   NFAPI_TRACE(NFAPI_TRACE_INFO,
               "[VNF] %s() vnf->p7_vnfs[0].config:%p VNF ADDRESS:%s:%d\n",
               __FUNCTION__,
               vnf->p7_vnfs[0].config,
-              params.my_addr,
-              params.my_portc);
-  strcpy(vnf->p7_vnfs[0].local_addr, params.my_addr);
-  vnf->p7_vnfs[0].local_port = params.my_portd;
+              vnf_addr,
+              vnf_p5_port);
+  strcpy(vnf->p7_vnfs[0].local_addr, vnf_addr);
+  vnf->p7_vnfs[0].local_port = vnf_p7_port;
 #endif
   vnf->p7_vnfs[0].mac = malloc(sizeof(mac_t));
   config = nfapi_vnf_config_create();
   config->malloc = malloc;
   config->free = free;
-  config->vnf_p5_port = params.my_portc;
+  config->vnf_p5_port = vnf_p5_port;
   config->vnf_ipv4 = 1;
   config->vnf_ipv6 = 0;
   config->pnf_list = 0;

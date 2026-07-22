@@ -25,7 +25,6 @@
 #include <malloc.h>
 #include <string.h>
 #include <math.h>
-#include "common_lib.h"
 #include "fapi_nr_ue_interface.h"
 #include "assertions.h"
 #include "common/utils/barrier/barrier.h"
@@ -57,6 +56,11 @@
 //       (0  + 0 * 20) % 512 = 0
 #define NUM_PROCESS_SLOT_TX_BARRIERS 512
 
+// CSI for tracking can have up to 2 resources per slot
+#define MAX_CSI_RES_SLOT 2
+// Threshold to change radio frequency
+#define TRS_CFO_THRESH 500
+
 #include "impl_defs_nr.h"
 #include "time_meas.h"
 #include "PHY/CODING/coding_defs.h"
@@ -71,7 +75,6 @@
 #endif
 
 #include <pthread.h>
-#include "radio/COMMON/common_lib.h"
 #include "NR_IF_Module.h"
 
 /// Context data structure for gNB subframe processing
@@ -555,7 +558,8 @@ typedef struct nr_phy_data_s {
   int n_dlsch_codewords;
   // Sidelink Rx action decided by MAC
   sl_nr_rx_config_type_enum_t sl_rx_action;
-  NR_UE_CSI_RS csirs_vars;
+  int num_csirs;
+  NR_UE_CSI_RS csirs_vars[MAX_CSI_RES_SLOT];
   NR_UE_CSI_IM csiim_vars;
 } nr_phy_data_t;
 

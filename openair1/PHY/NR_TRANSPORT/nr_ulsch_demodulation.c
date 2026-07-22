@@ -392,11 +392,7 @@ static void nr_pusch_symbol_processing(void *arg)
     int16_t *llr_ptr = llrs[0];
     if (rel15_ul->nrOfLayers != 1) {
       llr_ptr = &rdata->llr[pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers];
-      for (int i = 0; i < (nb_re_pusch); i++)
-        for (int l = 0; l < rel15_ul->nrOfLayers; l++)
-          for (int m = 0; m < rel15_ul->qam_mod_order; m++)
-            llr_ptr[i * rel15_ul->nrOfLayers * rel15_ul->qam_mod_order + l * rel15_ul->qam_mod_order + m] =
-                llrss[l][i * rel15_ul->qam_mod_order + m];
+      nr_layer_demapping(rel15_ul->nrOfLayers, rel15_ul->qam_mod_order, nb_re_pusch, llrss, llr_ptr);
     }
     stop_meas(&rdata->ul_demap);
     // unscrambling
