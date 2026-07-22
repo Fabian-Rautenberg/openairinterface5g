@@ -2405,6 +2405,14 @@ uint8_t pack_nr_srs_indication(void *msg, uint8_t **ppWritePackedMsg, uint8_t *e
 
 uint8_t unpack_nr_srs_report_tlv_value(nfapi_srs_report_tlv_t *report_tlv, uint8_t **ppReadPackedMsg, uint8_t *end)
 {
+  if ((report_tlv->length + 3) / 4 > sizeof(report_tlv->value) / sizeof(report_tlv->value[0])) {
+    NFAPI_TRACE(NFAPI_TRACE_ERROR,
+                "%s: SRS report TLV too large to unpack (length %u bytes, max %zu), dropping report\n",
+                __FUNCTION__,
+                report_tlv->length,
+                sizeof(report_tlv->value));
+    return 0;
+  }
 #ifndef ENABLE_AERIAL
   for (int i = 0; i < (report_tlv->length + 3) / 4; i++) {
     if (!pull32(ppReadPackedMsg, &report_tlv->value[i], end)) {
@@ -2412,7 +2420,7 @@ uint8_t unpack_nr_srs_report_tlv_value(nfapi_srs_report_tlv_t *report_tlv, uint8
     }
   }
 #else
-  const int16_t last_idx = ((report_tlv->length + 3) / 4) - 1;
+  const int32_t last_idx = ((report_tlv->length + 3) / 4) - 1;
   for (int i = 0; i < last_idx; i++) {
     if (!pull32(ppReadPackedMsg, &report_tlv->value[i], end)) {
       return 0;

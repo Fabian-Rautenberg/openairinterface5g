@@ -634,7 +634,7 @@ static int nr_ue_pdsch_procedures(PHY_VARS_NR_UE *ue,
   return 0;
 }
 
-static uint32_t compute_csi_rm_unav_res(fapi_nr_dl_config_dlsch_pdu_rel15_t *dlsch_config)
+static uint32_t compute_csi_rm_unav_res(fapi_nr_dl_config_dlsch_pdu_rel15_t *dlsch_config, freq_alloc_bitmap_t *freq_alloc)
 {
   uint32_t unav_res = 0;
   for (int i = 0; i < dlsch_config->numCsiRsForRateMatching; i++) {
@@ -663,15 +663,17 @@ static uint32_t compute_csi_rm_unav_res(fapi_nr_dl_config_dlsch_pdu_rel15_t *dls
     // check number overlapping prbs
     // assuming CSI is spanning the whole BW
     AssertFatal(dlsch_config->BWPSize <= csi_pdu->nr_of_rbs, "Assuming CSI-RS is spanning the whold BWP this shouldn't happen\n");
-    int dlsch_start = dlsch_config->start_rb + dlsch_config->BWPStart;
-    int num_overlapping_prbs = dlsch_config->number_rbs;
-    if (num_overlapping_prbs < 1)
-      continue; // no overlapping prbs
-    if (csi_pdu->freq_density < 2) { // 0.5 density
-      num_overlapping_prbs /= 2;
-      // odd number of prbs and the start PRB is even/odd when CSI is in even/odd PRBs
-      if ((num_overlapping_prbs % 2) && ((dlsch_start % 2) == csi_pdu->freq_density))
-        num_overlapping_prbs += 1;
+    int num_overlapping_prbs = 0;
+    for (int rb = freq_alloc->first_rb; rb <= freq_alloc->last_rb; rb++) {
+      if (!check_rb_in_bitmap(freq_alloc, rb))
+        continue;
+      if (csi_pdu->freq_density < 2) {
+        int abs_rb = rb + dlsch_config->BWPStart;
+        if ((abs_rb % 2) == csi_pdu->freq_density)
+          num_overlapping_prbs++;
+      } else {
+        num_overlapping_prbs++;
+      }
     }
     // density is number or res per port per rb (over all symbols)
     int ports [18] = {1, 1, 2, 4, 4, 8, 8, 8, 12, 12, 16, 16, 24, 24, 24, 32, 32, 32};
@@ -886,18 +888,22 @@ void pdcch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_
     memcpy(ue->phy_sim_rxdataF, rxdataF[0], sizeof(int32_t) * max_nb_symb_pdcch * fp->ofdm_symbol_size);
 }
 
-int is_ssb_in_symbol(const PHY_VARS_NR_UE *ue, const int symbIdxInFrame, const int slot, const int ssbMask, const int ssbIndex)
+int is_ssb_in_symbol(const PHY_VARS_NR_UE *ue,
+                     const int symbIdxInFrame,
+                     const int slot,
+                     const int ssbMask,
+                     const int ssbIndex,
+                     const int ssb_period)
 {
   const NR_DL_FRAME_PARMS *fp = &ue->frame_parms;
-  const fapi_nr_config_request_t *cfg = &ue->nrUE_config;
   // Skip if current SSB index is not transmitted
   if (!is_ssb_index_transmitted(ue, ssbIndex)) {
     return false;
   }
 
   const int startPbchSymb = nr_get_ssb_start_symbol(fp, ssbIndex) + 1;
-  const int startPbchSymbHf = (cfg->ssb_table.ssb_period == 0) ? (startPbchSymb + (fp->slots_per_frame * NR_SYMBOLS_PER_SLOT / 2))
-                                                               : (fp->slots_per_frame * NR_SYMBOLS_PER_SLOT);
+  const int startPbchSymbHf = (ssb_period == 0) ? (startPbchSymb + (fp->slots_per_frame * NR_SYMBOLS_PER_SLOT / 2))
+                                                : (fp->slots_per_frame * NR_SYMBOLS_PER_SLOT);
 
   // Skip if no SSB in current symbol
   if ((symbIdxInFrame >= startPbchSymb && symbIdxInFrame < (startPbchSymb + NB_SYMBOLS_PBCH))
@@ -922,7 +928,7 @@ int get_ssb_index_in_symbol(const PHY_VARS_NR_UE *ue, const int symbIdxInFrame, 
   // Find the SSB index corresponding to current symbol
   for (int ssbIndex = 0; ssbIndex < fp->Lmax; ssbIndex++) {
     const int ssbMask = cfg->ssb_table.ssb_mask_list[ssbIndex / 32].ssb_mask;
-    if (is_ssb_in_symbol(ue, symbIdxInFrame, slot, ssbMask, ssbIndex))
+    if (is_ssb_in_symbol(ue, symbIdxInFrame, slot, ssbMask, ssbIndex, ssb_period))
       return ssbIndex;
   }
 
@@ -1178,16 +1184,35 @@ void pdsch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_
   }
 
   // do procedures for CSI-RS
-  if (phy_data->csirs_vars.active == 1) {
-    for(int symb = 0; symb < ue->frame_parms.symbols_per_slot; symb++) {
-      if(is_csi_rs_in_symbol(phy_data->csirs_vars.csirs_config_pdu, symb)) {
-        if (!slot_fep_map[symb]) {
-          nr_slot_fep(ue, &ue->frame_parms, proc->nr_slot_rx, symb, rxdataF, link_type_dl, 0, ue->common_vars.rxdata);
-          slot_fep_map[symb] = true;
+  {
+    /*
+    CSI-RS for tracking use only one port.
+    Number of CSI-RS resources for tracking is always 2 per slot.
+    Computed estimates from first resource is saved and used while estimating second resource.
+    */
+    c16_t trs_estimates[ue->frame_parms.nb_antennas_rx][1][ue->frame_parms.ofdm_symbol_size];
+    for (int res = 0; res < MAX_CSI_RES_SLOT; res++) {
+      if (phy_data->csirs_vars[res].active == 1) {
+        for (int symb = 0; symb < ue->frame_parms.symbols_per_slot; symb++) {
+          if (is_csi_rs_in_symbol(phy_data->csirs_vars[res].csirs_config_pdu, symb)) {
+            if (!slot_fep_map[symb]) {
+              nr_slot_fep(ue, &ue->frame_parms, proc->nr_slot_rx, symb, rxdataF, link_type_dl, 0, ue->common_vars.rxdata);
+              slot_fep_map[symb] = true;
+            }
+          }
         }
+        if (res > 0 && phy_data->csirs_vars[res].csirs_config_pdu.csi_type == 0) // tracking CSI
+          AssertFatal(phy_data->csirs_vars[res - 1].active && (phy_data->csirs_vars[res - 1].csirs_config_pdu.csi_type == 0),
+                      "CSI-RS for tracking must have two consecutive active resources\n");
+        nr_ue_csi_rs_procedures(ue,
+                                proc,
+                                rxdataF,
+                                &phy_data->csirs_vars[res].csirs_config_pdu,
+                                trs_estimates,
+                                res,
+                                (res == 1) ? phy_data->csirs_vars[0].csirs_config_pdu.symb_l0 : -1);
       }
     }
-    nr_ue_csi_rs_procedures(ue, proc, rxdataF, &phy_data->csirs_vars.csirs_config_pdu);
   }
 
   int16_t *llr[2];
@@ -1230,7 +1255,7 @@ void pdsch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_
       int ptrsSymbPerSlot = get_ptrs_symbols_in_slot(ptrsSymbPos, dlsch_config->start_symbol, dlsch_config->number_symbols);
       unav_res = n_ptrs * ptrsSymbPerSlot;
     }
-    unav_res += compute_csi_rm_unav_res(dlsch_config);
+    unav_res += compute_csi_rm_unav_res(dlsch_config, &freq_alloc);
     int G = nr_get_G(freq_alloc.num_rbs,
                      dlsch_config->number_symbols,
                      nb_re_dmrs,

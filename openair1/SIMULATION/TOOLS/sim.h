@@ -5,6 +5,7 @@
 #ifndef __SIMULATION_TOOLS_DEFS_H__
 #define __SIMULATION_TOOLS_DEFS_H__
 #include "PHY/defs_common.h"
+#include "common_lib.h"
 #include <pthread.h>
 /** @defgroup _numerical_ Useful Numerical Functions
  *@{

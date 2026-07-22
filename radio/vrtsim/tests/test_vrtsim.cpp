@@ -44,16 +44,26 @@ class VRTSIMTest : public ::testing::TestWithParam<VRTSIMTestCase> {
   openair0_device_t client_device = {0};
   openair0_config_t server_config = {0};
   openair0_config_t client_config = {0};
+  std::string socket_path;
+  std::string shm_name;
 
   void SetUp() override
   {
     const auto &param = GetParam();
+
+    std::string unique_suffix = std::to_string(getpid()) + "_" + std::to_string(rand());
+    socket_path = "/tmp/vrtsim_connection_" + unique_suffix;
+    shm_name = "vrtsim_channel_" + unique_suffix;
 
     // Setup server
     std::vector<const char *> server_argv = {"--vrtsim.role",
                                              "server",
                                              "--vrtsim.disable-timing-thread",
                                              "1",
+                                             "--vrtsim.connection_descriptor",
+                                             socket_path.c_str(),
+                                             "--vrtsim.shm_channel_name",
+                                             shm_name.c_str(),
                                              "--vrtsim.ue_config.[0].antennas",
                                              param.ue_antennas.c_str()};
     cfg1 = load_configmodule(server_argv.size(), (char **)server_argv.data(), CONFIG_ENABLECMDLINEONLY);
@@ -65,7 +75,12 @@ class VRTSIMTest : public ::testing::TestWithParam<VRTSIMTestCase> {
     ASSERT_EQ(server_device.trx_start_func(&server_device), 0);
 
     // Setup client
-    std::vector<const char *> client_argv = {"--vrtsim.role", "client"};
+    std::vector<const char *> client_argv = {"--vrtsim.role",
+                                             "client",
+                                             "--vrtsim.connection_descriptor",
+                                             socket_path.c_str(),
+                                             "--vrtsim.shm_channel_name",
+                                             shm_name.c_str()};
     cfg2 = load_configmodule(client_argv.size(), (char **)client_argv.data(), CONFIG_ENABLECMDLINEONLY);
     uniqCfg = cfg2;
     client_config.tx_num_channels = param.client_tx;
@@ -85,6 +100,7 @@ class VRTSIMTest : public ::testing::TestWithParam<VRTSIMTestCase> {
       end_configmodule(cfg1);
     if (cfg2)
       end_configmodule(cfg2);
+    uniqCfg = nullptr;
   }
 };
 
@@ -180,10 +196,16 @@ class VRTSIMMultiUETest : public ::testing::TestWithParam<VRTSIMMultiTestCase> {
   std::vector<openair0_device_t> client_devices;
   openair0_config_t server_config = {0};
   std::vector<openair0_config_t> client_configs;
+  std::string socket_path;
+  std::string shm_name;
 
   void SetUp() override
   {
     const auto &param = GetParam();
+
+    std::string unique_suffix = std::to_string(getpid()) + "_" + std::to_string(rand());
+    socket_path = "/tmp/vrtsim_connection_" + unique_suffix;
+    shm_name = "vrtsim_channel_" + unique_suffix;
 
     // Setup server
     std::vector<std::string> server_args_store = {"test_vrtsim",
@@ -191,6 +213,10 @@ class VRTSIMMultiUETest : public ::testing::TestWithParam<VRTSIMMultiTestCase> {
                                                   "server",
                                                   "--vrtsim.disable-timing-thread",
                                                   "1",
+                                                  "--vrtsim.connection_descriptor",
+                                                  socket_path,
+                                                  "--vrtsim.shm_channel_name",
+                                                  shm_name,
                                                   "--vrtsim.num_ues",
                                                   std::to_string(param.num_ues)};
     for (int i = 0; i < param.num_ues; i++) {
@@ -217,7 +243,15 @@ class VRTSIMMultiUETest : public ::testing::TestWithParam<VRTSIMMultiTestCase> {
     cfg_clients.resize(param.num_ues);
 
     for (int i = 0; i < param.num_ues; i++) {
-      std::vector<std::string> client_args_store = {"test_vrtsim", "--vrtsim.role", "client", "--vrtsim.ue_id", std::to_string(i)};
+      std::vector<std::string> client_args_store = {"test_vrtsim",
+                                                    "--vrtsim.role",
+                                                    "client",
+                                                    "--vrtsim.connection_descriptor",
+                                                    socket_path,
+                                                    "--vrtsim.shm_channel_name",
+                                                    shm_name,
+                                                    "--vrtsim.ue_id",
+                                                    std::to_string(i)};
       std::vector<const char *> client_argv;
       for (const auto &arg : client_args_store) {
         client_argv.push_back(arg.c_str());
@@ -254,6 +288,7 @@ class VRTSIMMultiUETest : public ::testing::TestWithParam<VRTSIMMultiTestCase> {
     if (cfg_server) {
       end_configmodule(cfg_server);
     }
+    uniqCfg = nullptr;
   }
 };
 

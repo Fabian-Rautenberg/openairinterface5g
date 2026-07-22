@@ -1901,6 +1901,12 @@ void nr_rrc_mac_config_req_reset(module_id_t module_id, NR_UE_MAC_reset_cause_t 
       mac->state = UE_BARRED;
       break;
     case RRC_SETUP_REESTAB_RESUME:
+      for (int i = mac->lc_ordered_list.count; i > 0; i--) {
+        nr_lcordered_info_t *lc = mac->lc_ordered_list.array[i - 1];
+        if (lc->rb.type == NR_LCID_SRB && lc->rb.choice.srb_id == 0)
+          continue;
+        asn_sequence_del(&mac->lc_ordered_list, i - 1, 1);
+      }
       release_mac_configuration(mac, cause);
       nr_ue_mac_default_configs(mac);
       break;

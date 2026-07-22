@@ -42,7 +42,7 @@
   } while (0)
 
 /* Commmon */
-#include "radio/COMMON/common_lib.h"
+#include "COMMON/f1ap_messages_types.h"
 #include "common/platform_constants.h"
 #include "common/ran_context.h"
 #include "collection/linear_alloc.h"
@@ -497,10 +497,18 @@ typedef struct NR_pdsch_dmrs {
 struct NR_UE_info;
 struct gNB_MAC_INST_s;
 typedef void (*feedback_action_t)(struct gNB_MAC_INST_s *mac, struct NR_UE_info *ue);
+
+typedef enum {
+  PDSCH_TYPE0 = 0,
+  PDSCH_TYPE1 = 1
+} nr_pdsch_allocation_type_t;
+
 typedef struct NR_sched_pdsch {
   /// RB allocation within active BWP
+  nr_pdsch_allocation_type_t alloc_type;
   uint16_t rbSize;
   uint16_t rbStart;
+  uint8_t rbBitmap[36];
 
   /// MCS-related infos
   uint8_t mcs;
@@ -1150,6 +1158,16 @@ typedef struct {
   NR_ControlResourceSet_t coreset;
 } NR_sched_ctrl_sib1_t;
 
+/* Dimensions of the per-cell MCS distribution histograms (3GPP TS 28.552 §5.1.1.12). */
+#define NR_KPM_MAX_LAYERS       8  /* RI: 1..8                  */
+#define NR_KPM_NB_MCS_TABLE_DL  3  /* PDSCH MCS tables: 1..3    */
+#define NR_KPM_NB_MCS_TABLE_UL  4  /* PUSCH MCS tables: 0, 1, 3  */
+#define NR_KPM_NB_MCS           32 /* MCS index: 0..31          */
+
+/* Dimensions of the L1M.SS-RSRP histogram (3GPP TS 28.552 §5.1.1.22.1). */
+#define NR_KPM_NB_SSB            64  /* SS/PBCH block index: 0..63              */
+#define NR_KPM_SS_RSRP_NB_LEVELS 128 /* SS-RSRP report level: 0..127, TS 38.133 */
+
 typedef struct NR_du_stats {
   /// cell-wide wide-band CQI distribution, see 28.552 5.1.1.11.1;
   /// 0-15 CQI, 1-8 RI, 1-3 CQI table
@@ -1157,19 +1175,21 @@ typedef struct NR_du_stats {
 
   /// cell-wide MCS distribution in PDSCH, see 28.552 5.1.1.12.1
   /// 1-8 RI, 1-3 MCS table, 0-31 MCS value
-  uint32_t pdsch_mcs_dist[8][3][32];
+  uint32_t pdsch_mcs_dist[NR_KPM_MAX_LAYERS][NR_KPM_NB_MCS_TABLE_DL][NR_KPM_NB_MCS];
 
   /// cell-wide MCS distribution in PUSCH, see 28.552 5.1.1.12.1
-  /// 1-8 RI, 1-2 MCS table, 0-31 MCS value
-  uint32_t pusch_mcs_dist[8][2][32];
+  /// 1-8 RI, MCS table (0, 1, 3), 0-31 MCS value
+  uint32_t pusch_mcs_dist[NR_KPM_MAX_LAYERS][NR_KPM_NB_MCS_TABLE_UL][NR_KPM_NB_MCS];
+
+  /// cell-wide L1 SS-RSRP distribution per SSB beam, see 28.552 5.1.1.22.1
+  /// 0-63 SSB index, 0-127 SS-RSRP report level (TS 38.133)
+  uint32_t ss_rsrp_ssb_dist[NR_KPM_NB_SSB][NR_KPM_SS_RSRP_NB_LEVELS];
 } NR_du_stats_t;
 
 /*! \brief top level eNB MAC structure */
 typedef struct gNB_MAC_INST_s {
-  /// Ethernet parameters for northbound midhaul interface
-  eth_params_t                    eth_params_n;
-  /// address for F1U to bind, ports in eth_params_n
-  char *f1u_addr;
+  /// F1-C/U network configuration (addresses and ports)
+  f1ap_net_config_t net_config;
   /// Nvipc parameters for FAPI interface with Aerial
   nvipc_params_t nvipc_params_s;
   /// Module

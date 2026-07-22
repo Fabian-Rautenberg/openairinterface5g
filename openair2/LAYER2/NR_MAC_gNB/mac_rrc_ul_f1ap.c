@@ -16,24 +16,15 @@
 #include "lib/f1ap_interface_management.h"
 #include "lib/f1ap_ue_context.h"
 
-static f1ap_net_config_t read_DU_IP_config(const eth_params_t* f1_params, const char *f1u_ip_addr)
+static f1ap_net_config_t cp_net_config(const f1ap_net_config_t* c)
 {
-  AssertFatal(f1_params->my_portc == 0 && f1_params->remote_portc == 0, "portc not supported, must be 0\n");
-  f1ap_net_config_t nc = {0};
-
-  nc.CU_f1_ip_address= strdup(f1_params->remote_addr);
-  nc.CUport = f1_params->remote_portd;
-
-  nc.DU_f1c_ip_address = strdup(f1_params->my_addr);
-  nc.DU_f1u_ip_address = strdup(f1u_ip_addr);
-  nc.DUport = f1_params->my_portd;
-  LOG_I(F1AP,
-        "F1-C DU IPaddr %s, connect to F1-C CU %s, binding GTP to %s\n",
-        nc.DU_f1c_ip_address,
-        nc.CU_f1_ip_address,
-        nc.DU_f1u_ip_address);
-
-  // sctp_in_streams/sctp_out_streams are given by SCTP layer
+  f1ap_net_config_t nc = {
+    .CU_f1_ip_address = strdup(c->CU_f1_ip_address),
+    .DU_f1c_ip_address = strdup(c->DU_f1c_ip_address),
+    .DU_f1u_ip_address = strdup(c->DU_f1u_ip_address),
+    .CUport = c->CUport,
+    .DUport = c->DUport,
+  };
   return nc;
 }
 
@@ -55,7 +46,7 @@ static void f1_setup_request_f1ap(const f1ap_setup_req_t *req)
   MessageDef *msg = itti_alloc_new_message(TASK_MAC_GNB, 0, F1AP_DU_REGISTER_REQ);
   f1ap_setup_req_t f1ap_setup = cp_f1ap_setup_request(req);
   F1AP_DU_REGISTER_REQ(msg).setup_req = f1ap_setup;
-  F1AP_DU_REGISTER_REQ(msg).net_config = read_DU_IP_config(&RC.nrmac[0]->eth_params_n, RC.nrmac[0]->f1u_addr);
+  F1AP_DU_REGISTER_REQ(msg).net_config = cp_net_config(&RC.nrmac[0]->net_config);
   itti_send_msg_to_task(TASK_DU_F1, 0, msg);
 }
 

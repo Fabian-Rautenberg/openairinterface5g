@@ -54,7 +54,7 @@ void print_ue_mac_stats(const module_id_t mod, const int frame_rx, const int slo
   cur += snprintf(cur, end - cur, "    DL harq: %lu", mac->stats.dl.rounds[0]);
   int nb;
   for (nb = NR_MAX_HARQ_ROUNDS_FOR_STATS - 1; nb > 1; nb--)
-    if (mac->stats.ul.rounds[nb])
+    if (mac->stats.dl.rounds[nb])
       break;
   for (int i = 1; i < nb + 1; i++)
     cur += snprintf(cur, end - cur, "/%lu", mac->stats.dl.rounds[i]);

@@ -133,6 +133,9 @@ The other SDRs (AW2S, LimeSDR, ...) have no READMEs.
 ## Developer tools
 
 - [code-style-contrib.md](./code-style-contrib.md): overall working practices, code style, and review process
+- [git-guide.md](./git-guide.md): Git how-tos — commit signing setup, branch
+  management, submodules, recovering from mistakes, reusing conflict
+  resolutions (rerere)
 - [cross-compile.md](./cross-compile.md): how to cross-compile OAI for ARM
 - [clang-format.md](./clang-format.md): how to format the code. See also the
   next entry for an error detection tool.

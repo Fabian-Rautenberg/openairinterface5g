@@ -265,8 +265,8 @@ static int get_non_dynamic_priority(int fiveqi)
   for (int i = 0; i < sizeofArray(qos_fiveqi); ++i)
     if (qos_fiveqi[i] == fiveqi)
       return qos_priority[i];
-  AssertFatal(false, "illegal 5QI value %d\n", fiveqi);
-  return 0;
+  LOG_W(NR_MAC, "unsupported non-dynamic 5QI %d\n", fiveqi);
+  return -1;
 }
 
 static NR_QoS_config_t get_qos_config(const f1ap_qos_flow_param_t *qos)
@@ -319,6 +319,8 @@ static int handle_ue_context_drbs_setup(NR_UE_info_t *UE,
     int prio = 100;
     for (int q = 0; q < drb->nr.flows_len; ++q) {
       c.qos_config[q] = get_qos_config(&drb->nr.flows[q].param);
+      if (c.qos_config[q].priority < 0)
+        continue;
       prio = min(prio, c.qos_config[q].priority);
     }
     c.priority = prio;

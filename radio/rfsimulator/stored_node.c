@@ -4,6 +4,7 @@
 
 
 #include <common/utils/simple_executable.h>
+#include "common_lib.h"
 
 volatile int             oai_exit = 0;
 

@@ -24,7 +24,6 @@
 #include "PHY/types.h"
 
 #include "PHY/defs_common.h"
-#include "radio/COMMON/common_lib.h"
 #include "radio/ETHERNET/ethernet_lib.h"
 
 #include "PHY/if4_tools.h"
@@ -562,7 +561,8 @@ void* ru_thread_control( void* param )
 					 
 		//if (ru->is_slave == 1) lte_sync_time_init(&ru->frame_parms);
 
-		if (ru->rfdevice.is_init != 1) openair0_device_load(&ru->rfdevice,&ru->openair0_cfg);
+    int ret = openair0_device_load(&ru->rfdevice, &ru->openair0_cfg);
+    AssertFatal(ret == 0, "could not load device library\n");
 		
 		if (ru->rfdevice.trx_config_func) AssertFatal((ru->rfdevice.trx_config_func(&ru->rfdevice,&ru->openair0_cfg)==0), 
 							      "Failed to configure RF device for RU %d\n",ru->idx);

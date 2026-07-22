@@ -328,4 +328,5 @@ bool nr_pcch_type2_po_mo_in_range(int frame, int slot, int slots_per_frame, int 
 
 uint16_t nr_pdcch_monitoring_symbols_mask(const BIT_STRING_t *symbols_in_slot, uint8_t sps);
 
+uint8_t getNRBG(uint16_t bwp_size, uint16_t bwp_start, long rbg_size_config);
 #endif

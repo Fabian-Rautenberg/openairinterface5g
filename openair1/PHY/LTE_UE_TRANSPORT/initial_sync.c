@@ -14,7 +14,6 @@
 #include "PHY/MODULATION/modulation_UE.h"
 #include "PHY/LTE_ESTIMATION/lte_estimation.h"
 #include "PHY/LTE_REFSIG/lte_refsig.h"
-#include "common_lib.h"
 #include "PHY/INIT/phy_init.h"
 
 extern openair0_config_t openair0_cfg[];

@@ -410,7 +410,8 @@ int aw2s_startstreaming(openair0_device_t *device)
     printf("ORI_ObjectStateModify: %s\n", ORI_Result_Print(RE_result));
   }
 
-  device->fhstate.active = 1;
+  eth_state_t *eth = device->priv;
+  eth->fhstate.active = 1;
   return (0);
 }
 

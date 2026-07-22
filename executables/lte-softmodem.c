@@ -18,7 +18,6 @@
 #include "common/ran_context.h"
 #include "common/config/config_userapi.h"
 #include "common/utils/load_module_shlib.h"
-#include "radio/COMMON/common_lib.h"
 #include "radio/ETHERNET/if_defs.h"
 
 #include <openair1/PHY/phy_extern_ue.h>

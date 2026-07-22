@@ -18,7 +18,6 @@
 #include "common/config/config_userapi.h"
 #include "common/utils/load_module_shlib.h"
 #include "common/utils/nr/nr_common.h"
-#include "radio/COMMON/common_lib.h"
 #include "radio/ETHERNET/if_defs.h"
 #include "openair1/PHY/MODULATION/nr_modulation.h"
 #include "PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h"

@@ -46,13 +46,12 @@
 
 #define INITIAL_SSS_NR    (7)
 
-static void init_context_sss_nr(int amp, int16_t d_sss[N_ID_2_NUMBER][N_ID_1_NUMBER][LENGTH_SSS_NR])
+static void init_context_sss_nr(int amp, int N_ID_2, int16_t d_sss[N_ID_1_NUMBER][LENGTH_SSS_NR])
 {
   int16_t x0[LENGTH_SSS_NR];
   int16_t x1[LENGTH_SSS_NR];
   int16_t dss_current;
   int m0, m1;
-  int nid_2_num = get_softmodem_params()->sl_mode == 0 ? N_ID_2_NUMBER : N_ID_2_NUMBER_SL;
 
   const int x0_initial[INITIAL_SSS_NR] = { 1, 0, 0, 0, 0, 0, 0 };
   const int x1_initial[INITIAL_SSS_NR] = { 1, 0, 0, 0, 0, 0, 0 };
@@ -65,21 +64,19 @@ static void init_context_sss_nr(int amp, int16_t d_sss[N_ID_2_NUMBER][N_ID_1_NUM
     x1[i + 7] = (x1[i + 1] + x1[i]) % (2);
   }
 
-  for (int N_ID_2 = 0; N_ID_2 < nid_2_num; N_ID_2++) {
-    for (int N_ID_1 = 0; N_ID_1 < N_ID_1_NUMBER; N_ID_1++) {
-      m0 = 15 * (N_ID_1 / 112) + (5 * N_ID_2);
-      m1 = N_ID_1 % 112;
-      for (int n = 0; n < LENGTH_SSS_NR; n++) {
-        dss_current = (1 - 2 * x0 [(n + m0) % (LENGTH_SSS_NR)]) * (1 - 2 * x1[(n + m1) % (LENGTH_SSS_NR)]);
+  for (int N_ID_1 = 0; N_ID_1 < N_ID_1_NUMBER; N_ID_1++) {
+    m0 = 15 * (N_ID_1 / 112) + (5 * N_ID_2);
+    m1 = N_ID_1 % 112;
+    for (int n = 0; n < LENGTH_SSS_NR; n++) {
+      dss_current = (1 - 2 * x0[(n + m0) % (LENGTH_SSS_NR)]) * (1 - 2 * x1[(n + m1) % (LENGTH_SSS_NR)]);
       /* Modulation of SSS is a BPSK TS 36.211 chapter 5.1.2 BPSK */
 #if 1
-        d_sss[N_ID_2][N_ID_1][n]   = dss_current;// * amp;
-	(void) amp;
+      d_sss[N_ID_1][n] = dss_current; // * amp;
+      (void)amp;
 #else
-        (void) amp;
-        d_sss[N_ID_2][N_ID_1][n]   = (dss_current * SHRT_MAX)>>SCALING_PSS_NR;
+      (void)amp;
+      d_sss[N_ID_1][n] = (dss_current * SHRT_MAX) >> SCALING_PSS_NR;
 #endif
-      }
     }
   }
 
@@ -191,8 +188,8 @@ sss_detection_result_t rx_sss_nr(nr_sss_params_t *params,
   c16_t pss_ext[params->nb_antennas_rx][LENGTH_PSS_NR];
   c16_t sss_ext[params->nb_antennas_rx][LENGTH_SSS_NR];
   const int Nid2 = GET_NID2(pss->nid2);
-  int16_t d_sss[N_ID_2_NUMBER][N_ID_1_NUMBER][LENGTH_SSS_NR];
-  init_context_sss_nr(AMP, d_sss);
+  int16_t d_sss[N_ID_1_NUMBER][LENGTH_SSS_NR];
+  init_context_sss_nr(AMP, Nid2, d_sss);
 
   pss_sss_extract_nr(params, pss_ext, sss_ext, rxdataF); /* subframe */
 
@@ -220,7 +217,7 @@ sss_detection_result_t rx_sss_nr(nr_sss_params_t *params,
   int Nid1_start = 0;
   int Nid1_end = N_ID_1_NUMBER;
   if (target_Nid_cell != -1) {
-    if (GET_NID1(target_Nid_cell) != pss->nid2) {
+    if (GET_NID2(target_Nid_cell) != pss->nid2) {
       LOG_E(PHY, "calling sss detection with incoherent context %d, %d\n", pss->nid2, target_Nid_cell);
     } else {
       Nid1_start = GET_NID1(target_Nid_cell);
@@ -234,7 +231,7 @@ sss_detection_result_t rx_sss_nr(nr_sss_params_t *params,
         (c64_t){round(cos(M_PI / 3 / 15 * (phase_to_try[idx])) * 32767), round(sin(M_PI / 3 / 15 * (phase_to_try[idx])) * 32767)};
     for (int n1 = Nid1_start; n1 < Nid1_end; n1++) { // all possible Nid1 values
       int64_t metric = 0;
-      int16_t *d = d_sss[Nid2][n1];
+      int16_t *d = d_sss[n1];
       for (int i = 0; i < LENGTH_SSS_NR; i++) {
         // metric is only real part because sss is a pure real signal (imaginary is 0)
         metric += d[i] * (rot.r * sss_comp[i].r - rot.i * sss_comp[i].i);
@@ -277,7 +274,7 @@ sss_detection_result_t rx_sss_nr(nr_sss_params_t *params,
 
   int Nid1 = GET_NID1(res.nid_cell);
   LOG_D(PHY, "Nid2 %d Nid1 %d metric %d, phase_max %d \n", Nid2, Nid1, res.metric, res.phase);
-  int16_t *d = d_sss[Nid2][Nid1];
+  int16_t *d = d_sss[Nid1];
   c32_t sig_sum = {};
   for (int i = 0; i < LENGTH_SSS_NR; i++) {
     sig_sum.r += d[i] * sss_comp[i].r;

@@ -17,13 +17,19 @@ Key 5GS NAS messages:
 
 ## OAI Implementation Status
 
-The following table lists implemented NAS messages and whether there is an encoder or decoder function, and if a corresponding unit test exists.
+The following table lists NAS messages with dedicated `encode_*` / `decode_*` codecs under
+`openair3/NAS/NR_UE/5GS/` (`5GMM/MSG`, `5GSM/MSG`). Unit test entries refer to
+[`nas_lib_test.c`](../openair3/NAS/NR_UE/5GS/tests/nas_lib_test.c), most are encode/decode round-trips.
 
 | Type  | Message                                   | Encoding | Decoding | Unit test |
 |-------|-------------------------------------------|----------|----------|------------|
 | 5GMM  | Service Request                           | yes      | yes      | yes        |
 | 5GMM  | Service Accept                            | yes      | yes      | yes        |
 | 5GMM  | Service Reject                            | yes      | yes      | yes        |
+| 5GMM  | Authentication Failure                    | yes      | yes      | yes        |
+| 5GMM  | Authentication Reject                     | yes      | yes      | yes        |
+| 5GMM  | Security Mode Reject                      | yes      | yes      | yes        |
+| 5GMM  | Identity Request                          | no       | yes      | no         |
 | 5GMM  | Authentication Response                   | yes      | no       | no         |
 | 5GMM  | Identity Response                         | yes      | no       | no         |
 | 5GMM  | Security Mode Complete                    | yes      | no       | no         |
@@ -37,6 +43,23 @@ The following table lists implemented NAS messages and whether there is an encod
 | 5GMM  | Deregistration Request (UE originating)   | yes      | no       | no         |
 | 5GSM  | PDU Session Establishment Request         | yes      | no       | no         |
 | 5GSM  | PDU Session Establishment Accept          | no       | yes      | no         |
+
+### Runtime-handled messages
+
+These network-originated messages are handled in [`nr_nas_msg.c`](../openair3/NAS/NR_UE/nr_nas_msg.c):
+
+* Authentication Request
+* Security Mode Command
+* Downlink NAS Transport
+* Deregistration Accept (UE originating)
+* Registration Reject
+* PDU Session Establishment Reject
+
+## Integration testing
+
+End-to-end attach can be tested with the [NR UE NAS simulator](../tests/nr-ue-nas-simulator/README.md),
+which runs the OAI UE NAS stack and gNB NGAP against the AMF, forwarding NAS PDUs without PHY/MAC/RLC.
+Use `nas_lib_test` for isolated codec round-trips.
 
 ### Code Structure
 

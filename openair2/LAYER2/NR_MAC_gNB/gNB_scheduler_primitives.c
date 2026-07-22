@@ -423,7 +423,7 @@ static void get_coreset_rb_params(const NR_ControlResourceSet_t *coreset, uint16
   AssertFatal(!coreset->ext1 || !coreset->ext1->rb_Offset_r16, "rb-Offset in coreset configuration not handled\n");
   *n_rb = 0;
   *rb_start = 0;
-  
+
   for (int i = 0; i < 6; i++) {
     for (int t = 0; t < 8; t++) {
       if ((coreset->frequencyDomainResources.buf[i] >> (7 - t)) & 1) {
@@ -650,6 +650,7 @@ bool update_rb_mcs_tbs(NR_sched_pdsch_t *pdsch, uint32_t num_total_bytes, uint16
     if (get_rb_alloc(pdsch->rbSize, pdsch->rbSize, bwpStart, bwpSize, vrb_map, slbitmap, &rbStart, &rbSize)) {
       pdsch->rbStart = rbStart;
       pdsch->rbSize = rbSize;
+      pdsch->alloc_type = PDSCH_TYPE1;
       break;
     }
   }
@@ -677,18 +678,6 @@ bool update_rb_mcs_tbs(NR_sched_pdsch_t *pdsch, uint32_t num_total_bytes, uint16
   return true;
 }
 
-static bool multiple_2_3_5(int rb)
-{
-  while (rb % 2 == 0)
-    rb /= 2;
-  while (rb % 3 == 0)
-    rb /= 3;
-  while (rb % 5 == 0)
-    rb /= 5;
-
-  return (rb == 1);
-}
-
 bool nr_find_nb_rb(uint16_t Qm,
                    uint16_t R,
                    long transform_precoding,
@@ -701,10 +690,6 @@ bool nr_find_nb_rb(uint16_t Qm,
                    uint32_t *tbs,
                    uint16_t *nb_rb)
 {
-  // for transform precoding only RB = 2^a_2 * 3^a_3 * 5^a_5 is allowed with a non-negative
-  while (transform_precoding == NR_PUSCH_Config__transformPrecoder_enabled && !multiple_2_3_5(nb_rb_max))
-    nb_rb_max--;
-
   /* is the maximum (not even) enough? */
   *nb_rb = nb_rb_max;
   *tbs = nr_compute_tbs(Qm, R, *nb_rb, nb_symb_sch, nb_dmrs_prb, 0, 0, nrOfLayers) >> 3;
@@ -726,11 +711,6 @@ bool nr_find_nb_rb(uint16_t Qm,
   int hi = nb_rb_max;
   int lo = nb_rb_min;
   for (int p = (hi + lo) / 2; lo + 1 < hi; p = (hi + lo) / 2) {
-    // for transform precoding only RB = 2^a_2 * 3^a_3 * 5^a_5 is allowed with a non-negative
-    while(transform_precoding == NR_PUSCH_Config__transformPrecoder_enabled &&
-          !multiple_2_3_5(p))
-      p++;
-
     // If by increasing p for transform precoding we already hit the high, break to avoid infinite loop
     if (p == hi)
       break;
@@ -938,6 +918,7 @@ nfapi_nr_dl_dci_pdu_t *prepare_dci_pdu(nfapi_nr_dl_tti_pdcch_pdu_rel15_t *pdcch_
                                        int beam_index,
                                        int rnti)
 {
+  DevAssert(pdcch_pdu->numDlDci < MAX_DCI_CORESET);
   nfapi_nr_dl_dci_pdu_t *dci_pdu = &pdcch_pdu->dci_pdu[pdcch_pdu->numDlDci];
   dci_pdu->RNTI = rnti;
   dci_pdu->AggregationLevel = aggregation_level;
@@ -975,6 +956,48 @@ nfapi_nr_dl_dci_pdu_t *prepare_dci_pdu(nfapi_nr_dl_tti_pdcch_pdu_rel15_t *pdcch_
   return dci_pdu;
 }
 
+// See Section 5.1.2.2.1 of 38.214
+static uint32_t bitmap_to_rbg_allocation(const uint8_t *rbBitmap, const NR_UE_DL_BWP_t *dl_BWP)
+{
+  AssertFatal(dl_BWP && dl_BWP->pdsch_Config, "DL BWP and PDSCH_config must be configured for Type0 PDSCH allocation\n");
+  int N_RBG = getNRBG(dl_BWP->BWPSize, dl_BWP->BWPStart, dl_BWP->pdsch_Config->rbg_Size);
+  int P = getRBGSize(dl_BWP->BWPSize, dl_BWP->pdsch_Config->rbg_Size);
+  uint32_t rbg_bitmap = 0;
+  for (int i = 0; i < N_RBG; i++) {
+    // compute start and size of this RBG
+    // LSB of byte 0 of rbBitmap represents VRB 0 per SCF document (assuming it means CRB0)
+    int rbg_start, rbg_sz;
+    if (i == 0) {
+      rbg_start = dl_BWP->BWPStart;
+      rbg_sz = P - (dl_BWP->BWPStart % P);
+    } else if (i == N_RBG - 1) {
+      rbg_start = dl_BWP->BWPStart + P - (dl_BWP->BWPStart % P) + (i - 1) * P;
+      int tmp = (dl_BWP->BWPStart + dl_BWP->BWPSize) % P;
+      rbg_sz = tmp ? tmp : P;
+    } else {
+      rbg_start = dl_BWP->BWPStart + P - (dl_BWP->BWPStart % P) + (i - 1) * P;
+      rbg_sz = P;
+    }
+    // check all RBs in this RBG are either all set or all clear
+    int first_rb_set = (rbBitmap[rbg_start / 8] >> (rbg_start % 8)) & 1;
+    for (int rb = rbg_start + 1; rb < rbg_start + rbg_sz; rb++) {
+      int rb_set = (rbBitmap[rb / 8] >> (rb % 8)) & 1;
+      AssertFatal(rb_set == first_rb_set,
+                 "RB bitmap is not compatible with RBG size %d: RBG %d is partially allocated (PRB %d differs from RB start %d)\n",
+                  P,
+                  i,
+                  rb,
+                  rbg_start);
+    }
+    int allocated = first_rb_set;
+    // The order of RBG bitmap is such that RBG 0 is mapped to MSB
+    if (allocated)
+      rbg_bitmap |= (1 << (N_RBG - 1 - i));
+  }
+  return rbg_bitmap;
+}
+
+
 dci_pdu_rel15_t prepare_dci_dl_payload(const gNB_MAC_INST *gNB_mac,
                                        const NR_UE_info_t *UE,
                                        nr_rnti_type_t rnti_type,
@@ -1003,7 +1026,10 @@ dci_pdu_rel15_t prepare_dci_dl_payload(const gNB_MAC_INST *gNB_mac,
     else
       riv_bwp = UE->sc_info.initial_dl_BWPSize;
   }
-  dci_payload.frequency_domain_assignment.val = PRBalloc_to_locationandbandwidth0(pdsch_pdu->rbSize, pdsch_pdu->rbStart, riv_bwp);
+  if (sched_pdsch->alloc_type == PDSCH_TYPE1)
+    dci_payload.frequency_domain_assignment.val = PRBalloc_to_locationandbandwidth0(pdsch_pdu->rbSize, pdsch_pdu->rbStart, riv_bwp);
+  else
+    dci_payload.frequency_domain_assignment.val = bitmap_to_rbg_allocation(sched_pdsch->rbBitmap, dl_BWP);
   if (rnti_type == TYPE_SI_RNTI_) {
     dci_payload.system_info_indicator = !is_sib1;
     return dci_payload;
@@ -2433,11 +2459,11 @@ int get_spf(nfapi_nr_config_request_scf_t *cfg) {
   AssertFatal(mu>=0&&mu<4,"Illegal scs %d\n",mu);
 
   return(10 * (1<<mu));
-} 
+}
 
 int to_absslot(nfapi_nr_config_request_scf_t *cfg,int frame,int slot) {
 
-  return(get_spf(cfg)*frame) + slot; 
+  return(get_spf(cfg)*frame) + slot;
 
 }
 
@@ -3722,7 +3748,7 @@ void nr_mac_trigger_release_complete(gNB_MAC_INST *mac, int rnti)
   // table. This can happen, e.g., on Msg.3 with C-RNTI, where we create a UE
   // MAC context, decode the PDU, find the C-RNTI MAC CE, and then throw the
   // newly created context away. See also in _nr_rx_sdu() and commit 93f59a3c6e56f
-  if (!du_exists_f1_ue_data(rnti)) 
+  if (!du_exists_f1_ue_data(rnti))
     return;
 
   // unlock the scheduler temporarily to prevent possible deadlocks with
