@@ -806,7 +806,7 @@ int nr_config_pusch_pdu(NR_UE_MAC_INST_t *mac,
   delta_pusch = 0; // set to 0 as a workaround for PHY not applying PUSCH tx power
 
   bool is_rar_tx_retx = rnti_type == TYPE_TC_RNTI_;
-
+  bool tp_enabled = pusch_config_pdu->transform_precoding == NR_PUSCH_Config__transformPrecoder_enabled;
   pusch_config_pdu->tx_power = get_pusch_tx_power_ue(mac,
                                                      pusch_config_pdu->rb_size,
                                                      pusch_config_pdu->rb_start,
@@ -819,7 +819,7 @@ int nr_config_pusch_pdu(NR_UE_MAC_INST_t *mac,
                                                      pusch_config_pdu->pusch_data.tb_size << 3,
                                                      delta_pusch,
                                                      is_rar_tx_retx,
-                                                     pusch_config_pdu->transform_precoding);
+                                                     tp_enabled);
 
   pusch_config_pdu->ldpcBaseGraph = get_BG(pusch_config_pdu->pusch_data.tb_size << 3, pusch_config_pdu->target_code_rate);
 
@@ -2607,6 +2607,7 @@ void nr_ue_ul_scheduler(NR_UE_MAC_INST_t *mac, nr_uplink_indication_t *ul_info)
           }
           // Getting IP traffic to be transmitted
           int tx_power = pdu->tx_power;
+          bool tp_enabled = pdu->transform_precoding == NR_PUSCH_Config__transformPrecoder_enabled;
           int P_CMAX = nr_get_Pcmax(mac->p_Max,
                                     mac->nr_band,
                                     mac->frame_structure.frame_type,
@@ -2616,7 +2617,7 @@ void nr_ue_ul_scheduler(NR_UE_MAC_INST_t *mac, nr_uplink_indication_t *ul_info)
                                     false,
                                     mac->current_UL_BWP->scs,
                                     mac->current_UL_BWP->BWPSize,
-                                    pdu->transform_precoding,
+                                    tp_enabled,
                                     pdu->rb_size,
                                     pdu->rb_start);
 

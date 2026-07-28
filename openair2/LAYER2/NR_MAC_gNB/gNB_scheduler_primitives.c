@@ -810,13 +810,13 @@ const NR_DMRS_UplinkConfig_t *get_DMRS_UplinkConfig(const NR_PUSCH_Config_t *pus
 NR_pusch_dmrs_t get_ul_dmrs_params(const NR_ServingCellConfigCommon_t *scc,
                                    const NR_UE_UL_BWP_t *ul_bwp,
                                    const NR_tda_info_t *tda_info,
-                                   const int Layers)
+                                   const int Layers,
+                                   const uint16_t dmrs_ports,
+                                   const uint8_t cdm_groups)
 {
   NR_pusch_dmrs_t dmrs = {0};
-  if (ul_bwp->transform_precoding && Layers < 3)
-    dmrs.num_dmrs_cdm_grps_no_data = ul_bwp->dci_format == NR_UL_DCI_FORMAT_0_1 || tda_info->nrOfSymbols <= 2 ? 1 : 2;
-  else
-    dmrs.num_dmrs_cdm_grps_no_data = 2;
+  dmrs.dmrs_ports = (dmrs_ports != 0) ? dmrs_ports : (uint16_t)((1 << Layers) - 1);
+  dmrs.num_dmrs_cdm_grps_no_data = (cdm_groups > 0) ? cdm_groups : 2;
 
   const NR_DMRS_UplinkConfig_t *NR_DMRS_UplinkConfig = get_DMRS_UplinkConfig(ul_bwp->pusch_Config, tda_info);
   dmrs.ptrsConfig = NR_DMRS_UplinkConfig
@@ -1326,6 +1326,17 @@ static uint32_t compute_precoding_information(NR_PUSCH_Config_t *pusch_Config,
   return val;
 }
 
+static uint8_t get_pusch_front_load_symb(const nfapi_nr_pusch_pdu_t *pusch_pdu)
+{
+  // Detect if the scheduled DMRS uses 1 or 2 front-loaded symbols
+  // Consecutive bits signify a double-symbol DMRS
+  for (int i = 0; i < NR_SYMBOLS_PER_SLOT - 1; i++) {
+    if (((pusch_pdu->ul_dmrs_symb_pos >> i) & 0x3) == 0x3)
+      return 2;
+  }
+  return 1;
+}
+
 void config_uldci(const NR_UE_ServingCell_Info_t *sc_info,
                   const nfapi_nr_pusch_pdu_t *pusch_pdu,
                   dci_pdu_rel15_t *dci_pdu_rel15,
@@ -1386,9 +1397,25 @@ void config_uldci(const NR_UE_ServingCell_Info_t *sc_info,
                                                                                &pusch_pdu->nrOfLayers,
                                                                                tpmi);
 
-      // antenna_ports.val = 0 for transform precoder is disabled, dmrs-Type=1, maxLength=1, Rank=1/2/3/4
       // Antenna Ports
-      dci_pdu_rel15->antenna_ports.val = 0;
+      uint8_t front_load_symb = get_pusch_front_load_symb(pusch_pdu);
+      int antenna_ports_val = get_dci_antenna_ports_val(pusch_pdu->nrOfLayers,
+                                                        pusch_pdu->dmrs_ports,
+                                                        pusch_pdu->num_dmrs_cdm_grps_no_data,
+                                                        pusch_pdu->dmrs_config_type,
+                                                        front_load_symb,
+                                                        ul_bwp->transform_precoding);
+      if (antenna_ports_val < 0) {
+        LOG_E(NR_MAC,
+              "No DCI antenna_ports entry for rank=%d ports=0x%04x cdm=%d type=%d front load symbols %d\n",
+              pusch_pdu->nrOfLayers,
+              pusch_pdu->dmrs_ports,
+              pusch_pdu->num_dmrs_cdm_grps_no_data,
+              pusch_pdu->dmrs_config_type,
+              front_load_symb);
+        antenna_ports_val = 0;
+      }
+      dci_pdu_rel15->antenna_ports.val = (uint32_t)antenna_ports_val;
 
       // DMRS sequence initialization
       dci_pdu_rel15->dmrs_sequence_initialization.val = pusch_pdu->scid;
@@ -1582,8 +1609,7 @@ void nr_configure_pucch(nfapi_nr_pucch_pdu_t *pucch_pdu,
             pucch_pdu->start_symbol_index = pucchres->format.choice.format2->startingSymbolIndex;
             pucch_pdu->data_scrambling_id = pusch_id ? *pusch_id : *scc->physCellId;
             pucch_pdu->dmrs_scrambling_id = id0 ? *id0 : *scc->physCellId;
-            pucch_pdu->prb_size = compute_pucch_prb_size(2,
-                                                         pucchres->format.choice.format2->nrofPRBs,
+            pucch_pdu->prb_size = compute_pucch_prb_size(pucchres->format.choice.format2->nrofPRBs,
                                                          O_csi,
                                                          O_ack,
                                                          O_sr,
@@ -1608,8 +1634,7 @@ void nr_configure_pucch(nfapi_nr_pucch_pdu_t *pucch_pdu,
               pucch_pdu->add_dmrs_flag = pucchfmt->additionalDMRS ? 1 : 0;
             }
             int f3_dmrs_symbols = get_f3_dmrs_symbols(pucchres, pucch_Config);
-            pucch_pdu->prb_size = compute_pucch_prb_size(3,
-                                                         pucchres->format.choice.format3->nrofPRBs,
+            pucch_pdu->prb_size = compute_pucch_prb_size(pucchres->format.choice.format3->nrofPRBs,
                                                          O_csi,
                                                          O_ack,
                                                          O_sr,
@@ -4073,10 +4098,15 @@ bool prepare_initial_ul_rrc_message(gNB_MAC_INST *mac, NR_UE_info_t *UE)
   int srb_id = 1;
   const NR_ServingCellConfigCommon_t *scc = mac->common_channels[CC_id].ServingCellConfigCommon;
   int ssb_index = get_ssbidx_from_beam(mac, UE->UE_beam_index);
-  NR_CellGroupConfig_t *cellGroupConfig = get_initial_cellGroupConfig(UE->uid, scc, &mac->radio_config, &mac->rlc_config, ssb_index);
+  NR_CellGroupConfig_t *cellGroupConfig = get_initial_cellGroupConfig(UE->uid,
+                                                                      UE->is_redcap,
+                                                                      scc,
+                                                                      &mac->radio_config,
+                                                                      &mac->rlc_config,
+                                                                      ssb_index);
   ASN_STRUCT_FREE(asn_DEF_NR_CellGroupConfig, UE->CellGroup);
   UE->CellGroup = cellGroupConfig;
-  UE->local_bwp_id = mac->radio_config.first_active_bwp;
+  UE->local_bwp_id = UE->is_redcap ? 0 : mac->radio_config.first_active_bwp;
 
   if (!cellGroupConfig)
     return true;

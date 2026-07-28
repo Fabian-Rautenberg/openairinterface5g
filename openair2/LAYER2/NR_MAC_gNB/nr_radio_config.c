@@ -3562,6 +3562,7 @@ static NR_CSI_MeasConfig_t *get_csiMeasConfig(const NR_ServingCellConfig_t *conf
 }
 
 static NR_SpCellConfig_t *get_initial_SpCellConfig(int uid,
+                                                   bool redcap,
                                                    const NR_ServingCellConfigCommon_t *scc,
                                                    const nr_mac_config_t *configuration,
                                                    int ssb_index)
@@ -3596,7 +3597,7 @@ static NR_SpCellConfig_t *get_initial_SpCellConfig(int uid,
 
   uint64_t bitmap = get_ssb_bitmap(scc);
   int first_active_bwp = 0;
-  if (configuration->num_additional_bwps > 0)
+  if (!redcap && configuration->num_additional_bwps > 0)
     first_active_bwp = configuration->first_active_bwp > 0 ? 1 : 0;
 
   asn1cCallocOne(configDedicated->firstActiveDownlinkBWP_Id, first_active_bwp);
@@ -3755,7 +3756,10 @@ NR_RLC_BearerConfig_t *get_DRB_RLC_BearerConfig(long lcChannelId,
   return rlc_BearerConfig;
 }
 
-static bool verify_radio_configuration(int uid, const NR_ServingCellConfigCommon_t *scc, const nr_mac_config_t *configuration)
+static bool verify_radio_configuration(int uid,
+                                       bool redcap,
+                                       const NR_ServingCellConfigCommon_t *scc,
+                                       const nr_mac_config_t *configuration)
 {
   frame_structure_t *fs = &RC.nrmac[0]->frame_structure;
   int srs_offset = get_ul_slot_offset(fs, uid, false);
@@ -3765,7 +3769,7 @@ static bool verify_radio_configuration(int uid, const NR_ServingCellConfigCommon
     return false;
   }
 
-  int n_dl_bwp = 1 + configuration->num_additional_bwps; // initial + additional bwps
+  int n_dl_bwp = 1 + (redcap ? 0 : configuration->num_additional_bwps); // initial + additional bwps
   int csi_offset = fs->numb_slots_period * n_dl_bwp;
   // see set_csirs_periodicity
   if (csi_offset / 320 >= get_full_dl_slots_per_period(fs)) {
@@ -3800,15 +3804,16 @@ static bool verify_radio_configuration(int uid, const NR_ServingCellConfigCommon
 }
 
 NR_CellGroupConfig_t *get_initial_cellGroupConfig(int uid,
+                                                  bool redcap,
                                                   const NR_ServingCellConfigCommon_t *scc,
                                                   const nr_mac_config_t *configuration,
                                                   const nr_rlc_configuration_t *default_rlc_config,
                                                   int ssb_index)
 {
-  if (!verify_radio_configuration(uid, scc, configuration))
+  if (!verify_radio_configuration(uid, redcap, scc, configuration))
     return NULL;
 
-  NR_SpCellConfig_t *spCellConfig = get_initial_SpCellConfig(uid, scc, configuration, ssb_index);
+  NR_SpCellConfig_t *spCellConfig = get_initial_SpCellConfig(uid, redcap, scc, configuration, ssb_index);
   NR_CellGroupConfig_t *cellGroupConfig = calloc(1, sizeof(*cellGroupConfig));
   cellGroupConfig->cellGroupId = 0;
 

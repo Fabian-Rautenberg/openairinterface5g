@@ -155,8 +155,6 @@ typedef struct {
 ///
 #define NFAPI_RX_IND_MAX_PDU 100
 typedef struct {
-  uint16_t sfn;
-  uint16_t slot;
   uint16_t number_pdus;
   fapi_nr_rx_indication_body_t rx_indication_body[NFAPI_RX_IND_MAX_PDU];
 } fapi_nr_rx_indication_t;
@@ -174,8 +172,6 @@ typedef struct {
 
 ///
 typedef struct {
-  uint16_t sfn;
-  uint16_t slot;
   fapi_nr_tx_config_t tx_config;
   uint16_t number_of_pdus;
   fapi_nr_tx_request_body_t tx_request_body[NFAPI_MAX_NUM_UL_PDU];

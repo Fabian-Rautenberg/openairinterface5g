@@ -98,7 +98,7 @@ void generate_pss_nr_time(int ofdm_symbol_size,
   for (int i=0; i < LENGTH_PSS_NR; i++) {
     if (k >= ofdm_symbol_size)
       k -= ofdm_symbol_size;
-    synchroF_tmp[k] = (c16_t){.r = (pss[i] * SHRT_MAX) >> SCALING_PSS_NR}; /* Maximum value for type short int ie int16_t */
+    synchroF_tmp[k] = (c16_t){.r = pss[i] * ((1U << SCALING_PSS_NR) - 1)};
     k++;
   }
 
@@ -167,14 +167,6 @@ pss_detection_result_t pss_search_time_nr(const pss_search_t *p)
   }
 
   c16_t(*pssTime)[p->ofdm_symbol_size] = (c16_t(*)[p->ofdm_symbol_size])p->pssTime;
-  int maxval=0;
-  int max_size = get_softmodem_params()->sl_mode == 0 ?  NUMBER_PSS_SEQUENCE : NUMBER_PSS_SEQUENCE_SL;
-  for (int j = 0; j < max_size; j++)
-    for (int i = 0; i < p->ofdm_symbol_size; i++) {
-      maxval = max(maxval, abs(pssTime[j][i].r));
-      maxval = max(maxval, abs(pssTime[j][i].i));
-    }
-  int shift = log2_approx(maxval);//*(frame_parms->ofdm_symbol_size+frame_parms->nb_prefix_samples)*2);
 
   /* Search pss in the received buffer each 4 samples which ensures a memory alignment on 128 bits (32 bits x 4 ) */
   /* This is required by SIMD (single instruction Multiple Data) Extensions of Intel processors. */
@@ -198,7 +190,7 @@ pss_detection_result_t pss_search_time_nr(const pss_search_t *p)
        * (ar=0..nb_ant_rx) and store the sum in temp[n]; */
       for (int ar = 0; ar < p->nb_antennas_rx; ar++) {
         /* perform correlation of rx data and pss sequence ie it is a dot product */
-        const c32_t result = dot_product(pssTime[pss], &p->rxdata[ar][n], p->ofdm_symbol_size, shift);
+        const c32_t result = dot_product(pssTime[pss], &p->rxdata[ar][n], p->ofdm_symbol_size, SCALING_PSS_NR);
         const c64_t r64 = {.r = result.r, .i = result.i};
         pss_corr_ue += squaredMod(r64);
       }
@@ -225,13 +217,13 @@ pss_detection_result_t pss_search_time_nr(const pss_search_t *p)
     // International Conference on Communications and Networking in China, 2012.
 
     // Computing cross-correlation at peak on half the symbol size for first half of data
-    c32_t r1 = dot_product(pssTime[pss_source], &p->rxdata[0][peak_position], p->ofdm_symbol_size >> 1, shift);
+    c32_t r1 = dot_product(pssTime[pss_source], &p->rxdata[0][peak_position], p->ofdm_symbol_size >> 1, SCALING_PSS_NR);
     // Computing cross-correlation at peak on half the symbol size for data shifted by half symbol size
     // as it is real and complex it is necessary to shift by a value equal to symbol size to obtain such shift
     c32_t r2 = dot_product(pssTime[pss_source] + (p->ofdm_symbol_size >> 1),
                            &p->rxdata[0][peak_position] + (p->ofdm_symbol_size >> 1),
                            p->ofdm_symbol_size >> 1,
-                           shift);
+                           SCALING_PSS_NR);
     cd_t r1d = {r1.r, r1.i}, r2d = {r2.r, r2.i};
     // estimation of fractional frequency offset: angle[(result1)'*(result2)]/pi
     ffo_est = atan2(r1d.r * r2d.i - r2d.r * r1d.i, r1d.r * r2d.r + r1d.i * r2d.i) / M_PI;

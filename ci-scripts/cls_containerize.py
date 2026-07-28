@@ -675,5 +675,5 @@ class Containerize():
 
 		logging.info(f"check against thresholds from {thresholds}")
 		success, datalog_rt_stats = cls_analysis.Analysis.analyze_rt_stats(thresholds, local_files)
-		HTML.CreateHtmlDataLogTable(datalog_rt_stats)
+		HTML.CreateHtmlDataLogTable(datalog_rt_stats, thresholds)
 		return success

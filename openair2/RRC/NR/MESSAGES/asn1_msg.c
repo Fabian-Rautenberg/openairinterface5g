@@ -1020,7 +1020,8 @@ int do_NR_ULInformationTransfer(uint8_t **buffer, uint32_t pdu_length, uint8_t *
 int do_RRCReestablishmentRequest(uint8_t *buffer,
                                  NR_ReestablishmentCause_t cause,
                                  uint32_t cell_id,
-                                 uint16_t c_rnti)
+                                 uint16_t c_rnti,
+                                 uint16_t short_mac_i)
 {
   asn_enc_rval_t enc_rval;
   NR_UL_CCCH_Message_t ul_ccch_msg;
@@ -1038,10 +1039,9 @@ int do_RRCReestablishmentRequest(uint8_t *buffer,
   rrcReestablishmentRequest->rrcReestablishmentRequest.reestablishmentCause = cause;
   rrcReestablishmentRequest->rrcReestablishmentRequest.ue_Identity.c_RNTI = c_rnti;
   rrcReestablishmentRequest->rrcReestablishmentRequest.ue_Identity.physCellId = cell_id;
-  // TODO properly setting shortMAC-I (see 5.3.7.4 of 331)
   rrcReestablishmentRequest->rrcReestablishmentRequest.ue_Identity.shortMAC_I.buf = buf;
-  rrcReestablishmentRequest->rrcReestablishmentRequest.ue_Identity.shortMAC_I.buf[0] = 0x08;
-  rrcReestablishmentRequest->rrcReestablishmentRequest.ue_Identity.shortMAC_I.buf[1] = 0x32;
+  rrcReestablishmentRequest->rrcReestablishmentRequest.ue_Identity.shortMAC_I.buf[0] = (short_mac_i >> 8) & 0xFF;
+  rrcReestablishmentRequest->rrcReestablishmentRequest.ue_Identity.shortMAC_I.buf[1] = short_mac_i & 0xFF;
   rrcReestablishmentRequest->rrcReestablishmentRequest.ue_Identity.shortMAC_I.size = 2;
 
   if (LOG_DEBUGFLAG(DEBUG_ASN1)) {

@@ -12,29 +12,33 @@ For details on the implementation, please consult the [developer notes](../opena
 ## Requirements
 
 In principle, any lookaside LDPC accelerator supporting the O-RAN AAL/DPDK BBDEV should work.
-However, the current implementation has only been validated for the Xilinx T2, Intel ACC100, and Intel ACC200 (VRB1).
+However, the current implementation has only been validated for the AMD T2 Telco Accelerator Card, Intel ACC100, and Intel ACC200 (VRB1).
 Therefore, your mileage may vary when using other BBDEV devices as there may be some hardware-specific changes required -- contributions are welcome!
 
 ### DPDK Version Requirements
 
 The following DPDK versions are supported:
-- For the Xilinx T2 card, DPDK20.11+ is supported.
+- For the AMD T2 Telco Accelerator Card, DPDK20.11+ is supported.
 - As for the Intel ACC100/ACC200, only DPDK22.11+ is supported.
 
 ### Tested Devices/ DPDK versions
 
-#### Xilinx T2
+#### AMD T2 Telco Accelerator Card
 
-- DPDK20.11.9*.
-- DPDK22.11.7*.
-> Note: FPGA bitstream image and the corresponding patch file (e.g., `ACCL_BBDEV_DPDK20.11.3_ldpc_3.1.918.patch` for DPDK20.11) from Accelercomm required.
+- DPDK22.11
+- DPDK22.11.3
+
+> [!NOTE]
+> FPGA bitstream image and the corresponding patch file (e.g., `AMD-T2-SDFEC_25-03-1.patch` for DPDK22.11/DPDK22.11.3) required.
 
 #### Intel ACC100
 
 - DPDK22.11.7*.
 - DPDK23.11.3*.
 - DPDK24.11.2.
-> Note: [Patch]((https://github.com/DPDK/dpdk/commit/fdde63a1dfc129d0a510a831aa98253b36a2a1cd)) required for pre-DPDK24.11 versions when using the Intel ACC100.
+
+> [!NOTE]
+> [Patch](https://github.com/DPDK/dpdk/commit/fdde63a1dfc129d0a510a831aa98253b36a2a1cd) required for pre-DPDK24.11 versions when using the Intel ACC100.
 
 #### Intel ACC200 (also known as VRB1)
 - DPDK22.11.7.
@@ -44,39 +48,34 @@ The following DPDK versions are supported:
 ## System Setup
 ### DPDK installation
 
-> Important: 
-> - If you are using the Xilinx T2 card, you will need to apply the vendor-supplied patches before compiling DPDK. 
+> [!IMPORTANT]
+> - If you are using the AMD T2 Telco Accelerator Card, you will need to apply the vendor-supplied patches before compiling DPDK.
 > - If you are using the Intel ACC100, you will need to [patch](https://github.com/DPDK/dpdk/commit/fdde63a1dfc129d0a510a831aa98253b36a2a1cd) the ACC100's driver if you are using DPDK22.11 or DPDK23.11. 
 
 
-Refer to the guide [here](./ORAN_FHI7.2_Tutorial.md?ref_type=heads#dpdk-data-plane-development-kit) to install, and then validate your DPDK installation.
+Refer to the [guide](./ORAN_FHI7.2_Tutorial.md?ref_type=heads#dpdk-data-plane-development-kit) to install, and then validate your DPDK installation. Ensure that you follow the DPDK version requirements for your specific device.
 
 <details open> 
-<summary> Notes on DPDK patching/installation for Xilinx T2. </summary>
+<summary> Notes on DPDK patching/installation for AMD T2 Telco Accelerator Card. </summary>
 
-*Note: The following instructions apply to `ACCL_BBDEV_DPDK20.11.3_ldpc_3.1.918.patch`, compatible with DPDK 20.11.9. For older patches (e.g., `ACL_BBDEV_DPDK20.11.3_BL_1006_build_1105_dev_branch_MCT_optimisations_1106_physical_std.patch`), refer to the T2 documentation in `2023.w48`.*
+> The following instructions apply to `AMD-T2-SDFEC_25-03-1.patch`, compatible with DPDK22.11 and DPDK.22.11.3.
+> For older patches:
+> - `ACCL_BBDEV_DPDK20.11.3_ldpc_3.1.918.patch`, refer to the T2 documentation in [2026.w28](https://github.com/duranta-project/openairinterface5g/releases/tag/2026.w28).
+> - `ACL_BBDEV_DPDK20.11.3_BL_1006_build_1105_dev_branch_MCT_optimisations_1106_physical_std.patch`, refer to the T2 documentation in [2023.w48](https://github.com/duranta-project/openairinterface5g/releases/tag/2023.w48).
 
 ```bash
-# Get DPDK source code
-git clone https://github.com/DPDK/dpdk-stable.git ~/dpdk-stable
-cd ~/dpdk-stable
-git checkout v20.11.9
-git apply ~/ACL_BBDEV_DPDK20.11.3_ldpc_3.1.918.patch
-```
-Replace `~/ACL_BBDEV_DPDK20.11.3_ldpc_3.1.918.patch` by patch file provided by
-Accelercomm.
-
-If you would like to install DPDK to a custom directory, here is an example.
-```bash
-cd ~/dpdk-stable
-# meson setup build
-meson setup --prefix=/opt/dpdk-t2 build # for installation with non-default installation prefix
-cd build
-ninja
+# Get DPDK source code for DPDK22.11.3
+wget http://fast.dpdk.org/rel/dpdk-22.11.3.tar.xz
+tar xvf dpdk-22.11.3.tar.xz && cd dpdk-stable-22.11.3
+git apply ~/AMD-T2-SDFEC_25-03-1.patch
+# Install DPDK
+meson setup build
+# Use "meson setup --prefix=/opt/dpdk-t2 build" for installation into non-default installation path
+ninja -C build
 sudo ninja install
 sudo ldconfig
-
 ```
+
 </details>
 
 ### System configuration
@@ -121,13 +120,14 @@ Lastly, we bind our accelerator with the `vfio-pci` driver.
 # sudo dpdk-devbind.py --bind=vfio-pci 0000:f7:00.0
 ```
 
-> Note: For the Xilinx T2, we can use this device directly.
+> [!NOTE]
+> For the AMD T2 Telco Accelerator Card, we can use this device directly.
 If you use an Intel vRAN accelerator, read on.
 
 #### Additional Steps for Intel vRAN Accelerators
 
-> IMPORTANT NOTE: 
-> - Currently, we only support using the Virtual Functions (VFs) of the Intel vRAN accelerators, but not the Physical Function (PF). 
+> [!IMPORTANT]
+> - Currently, we only support using the Virtual Functions (VFs) of the Intel vRAN accelerators, but not the Physical Function (PF).
 > - One key advantage of using VFs is that this allows us to share the accelerator with other DU instances on the same machine, which is common in practice.
 
 If you are using an Intel vRAN accelerator, you will need to use the [pf_bb_config](https://github.com/intel/pf-bb-config) tool to configure the accelerator beforehand. 
@@ -206,12 +206,14 @@ A shared object file `libldpc_aal.so` will be created during the compilation.
 This object is conditionally compiled. 
 The selection of the library to compile is done using `--build-lib ldpc_aal`.
 
-> Note: The required DPDK poll mode driver has to be present on the host machine and required DPDK version has to be installed on the host, prior to building OAI.
+> [!NOTE]
+> The required DPDK poll mode driver has to be present on the host machine and required DPDK version has to be installed on the host, prior to building OAI.
 
 ## O-RAN AAL DPDK EAL parameters
 To configure O-RAN AAL/DPDK BBDEV, you can set the following parameters via the command line of PHY simulators or nr-softmodem:
 
-> Note: the group parameter name has been renamed from `nrLDPC_coding_t2` to
+> [!NOTE]
+> The group parameter name has been renamed from `nrLDPC_coding_t2` to
 > `nrLDPC_coding_aal` to better reflect that it is a generic AAL accelerator
 > card.
 
@@ -226,9 +228,11 @@ Ensure that the CPU cores specified in `nrLDPC_coding_aal.dpdk_core_list` are av
 
 - `nrLDPC_coding_aal.num_harq_codeblock` - optional parameter, size of the HARQ buffer in terms of the number of 32kB blocks, by default set to *512* (maximum for the T2; as for the ACCs, this can be further increased).
 
-- `nrLDPC_coding_aal.is_t2` - optional parameter, set this to 1 when using the Xilinx T2 card.
+- `nrLDPC_coding_aal.is_t2` - optional parameter, set this to 1 when using the AMD T2 Telco Accelerator Card.
 
-**Note:** These parameters can also be provided in a configuration file.
+> [!NOTE]
+> These parameters can also be provided in a configuration file.
+
 Example for the ACC200:
 ```
 nrLDPC_coding_aal : {
@@ -277,6 +281,9 @@ sudo ./nr_dlsim -n300 -s30 -R 106 -e 27 --loader.ldpc.shlibversion _aal --nrLDPC
 When running the gNB **with FHI 7.2**, it is not necessary to provide the `--nrLDPC_coding_aal.dpdk_core_list` argument
 since the core list specified for FHI 7.2 will be used for DPDK.
 If it is provided, the AAL core list wil be ignored.  
+
+> [!NOTE]
+> Ensure that the xRAN library is built using the same DPDK version as the accelerator poll-mode driver.
 
 Example command:
 ```bash

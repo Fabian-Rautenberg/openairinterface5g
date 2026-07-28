@@ -75,7 +75,7 @@ static void init_context_sss_nr(int amp, int N_ID_2, int16_t d_sss[N_ID_1_NUMBER
       (void)amp;
 #else
       (void)amp;
-      d_sss[N_ID_1][n] = (dss_current * SHRT_MAX) >> SCALING_PSS_NR;
+      d_sss[N_ID_1][n] = dss_current((1U << SCALING_PSS_NR) - 1);
 #endif
     }
   }

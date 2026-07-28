@@ -1788,8 +1788,7 @@ int nr_ue_configure_pucch(NR_UE_MAC_INST_t *mac,
         pucch_pdu->start_symbol_index = pucchres->format.choice.format2->startingSymbolIndex;
         pucch_pdu->data_scrambling_id = pusch_id != NULL ? *pusch_id : mac->physCellId;
         pucch_pdu->dmrs_scrambling_id = id0 != NULL ? *id0 : mac->physCellId;
-        pucch_pdu->prb_size = compute_pucch_prb_size(2,
-                                                     pucchres->format.choice.format2->nrofPRBs,
+        pucch_pdu->prb_size = compute_pucch_prb_size(pucchres->format.choice.format2->nrofPRBs,
                                                      pucch->csi_payload.p1_bits,
                                                      pucch->n_harq,
                                                      pucch->n_sr,
@@ -1824,8 +1823,7 @@ int nr_ue_configure_pucch(NR_UE_MAC_INST_t *mac,
           else
             f3_dmrs_symbols = 2<<pucch_pdu->add_dmrs_flag;
         }
-        pucch_pdu->prb_size = compute_pucch_prb_size(3,
-                                                     pucchres->format.choice.format3->nrofPRBs,
+        pucch_pdu->prb_size = compute_pucch_prb_size(pucchres->format.choice.format3->nrofPRBs,
                                                      pucch->csi_payload.p1_bits,
                                                      pucch->n_harq,
                                                      pucch->n_sr,

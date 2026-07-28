@@ -27,9 +27,6 @@
 #endif
 
 typedef struct {
-  eth_state_t e;
-  rru_config_msg_type_t last_msg;
-  int capabilities_sent;
   void *oran_priv;
   void *mplane_priv;
   uint32_t nCC;
@@ -90,7 +87,9 @@ void trx_oran_end(openair0_device_t *device)
   printf("ORAN: %s\n", __FUNCTION__);
   oran_eth_state_t *s = device->priv;
   xran_shutdown(s->oran_priv);
-  xran_close(s->oran_priv);
+  for (int32_t port_id = 0; port_id < s->num_ports; port_id++) {
+    xran_close(((void **)s->oran_priv)[port_id]);
+  }
   xran_cleanup();
   xran_mem_mgr_leak_detector_destroy();
 }
@@ -120,18 +119,6 @@ int trx_oran_stop(openair0_device_t *device)
   return (0);
 }
 
-int trx_oran_set_freq(openair0_device_t *device, openair0_config_t *openair0_cfg)
-{
-  printf("ORAN: %s\n", __FUNCTION__);
-  return (0);
-}
-
-int trx_oran_set_gains(openair0_device_t *device, openair0_config_t *openair0_cfg)
-{
-  printf("ORAN: %s\n", __FUNCTION__);
-  return (0);
-}
-
 int trx_oran_get_stats(openair0_device_t *device)
 {
   uint64_t total_time, used_time;
@@ -141,104 +128,6 @@ int trx_oran_get_stats(openair0_device_t *device)
     LOG_I(HW, "xran_get_time_stats(): total thread time %ld, total time essential tasks %ld, num cores used %d\n", total_time, used_time, num_core_used);
   printf("ORAN: %s\n", __FUNCTION__);
   return (0);
-}
-
-int trx_oran_reset_stats(openair0_device_t *device)
-{
-  printf("ORAN: %s\n", __FUNCTION__);
-  return (0);
-}
-
-int ethernet_tune(openair0_device_t *device, unsigned int option, int value)
-{
-  printf("ORAN: %s\n", __FUNCTION__);
-  return 0;
-}
-
-int trx_oran_write_raw(openair0_device_t *device, openair0_timestamp_t timestamp, void **buff, int nsamps, int cc, int flags)
-{
-  printf("ORAN: %s\n", __FUNCTION__);
-  return 0;
-}
-
-int trx_oran_read_raw(openair0_device_t *device, openair0_timestamp_t *timestamp, void **buff, int nsamps, int cc)
-{
-  printf("ORAN: %s\n", __FUNCTION__);
-  return 0;
-}
-
-char *msg_type(int t)
-{
-  static char *s[12] = {
-      "RAU_tick",
-      "RRU_capabilities",
-      "RRU_config",
-      "RRU_config_ok",
-      "RRU_start",
-      "RRU_stop",
-      "RRU_sync_ok",
-      "RRU_frame_resynch",
-      "RRU_MSG_max_num",
-      "RRU_check_sync",
-      "RRU_config_update",
-      "RRU_config_update_ok",
-  };
-
-  if (t < 0 || t > 11)
-    return "UNKNOWN";
-  return s[t];
-}
-
-int trx_oran_ctlsend(openair0_device_t *device, void *msg, ssize_t msg_len)
-{
-  RRU_CONFIG_msg_t *rru_config_msg = msg;
-  oran_eth_state_t *s = device->priv;
-
-  printf("ORAN: %s\n", __FUNCTION__);
-
-  printf("    rru_config_msg->type %d [%s]\n", rru_config_msg->type, msg_type(rru_config_msg->type));
-
-  s->last_msg = rru_config_msg->type;
-
-  return msg_len;
-}
-
-int trx_oran_ctlrecv(openair0_device_t *device, void *msg, ssize_t msg_len)
-{
-  RRU_CONFIG_msg_t *rru_config_msg = msg;
-  oran_eth_state_t *s = device->priv;
-
-  printf("ORAN: %s\n", __FUNCTION__);
-
-  if (s->last_msg == RAU_tick && s->capabilities_sent == 0) {
-    printf("ORAN ctrlrcv RRU_tick received and send capabilities hard coded\n");
-    RRU_capabilities_t *cap;
-    rru_config_msg->type = RRU_capabilities;
-    rru_config_msg->len = sizeof(RRU_CONFIG_msg_t) - MAX_RRU_CONFIG_SIZE + sizeof(RRU_capabilities_t);
-    // Fill RRU capabilities (see openair1/PHY/defs_RU.h)
-    // For now they are hard coded - try to retreive the params from openari device
-
-    cap = (RRU_capabilities_t *)&rru_config_msg->msg[0];
-    cap->FH_fmt = OAI_IF4p5_only;
-    cap->num_bands = 1;
-    cap->band_list[0] = 78;
-    // cap->num_concurrent_bands             = 1; component carriers
-    cap->nb_rx[0] = 1; // device->openair0_cfg->rx_num_channels;
-    cap->nb_tx[0] = 1; // device->openair0_cfg->tx_num_channels;
-    cap->max_pdschReferenceSignalPower[0] = -27;
-    cap->max_rxgain[0] = 90;
-    cap->N_RB_DL[0] = 106;
-    cap->N_RB_UL[0] = 106;
-
-    s->capabilities_sent = 1;
-
-    return rru_config_msg->len;
-  }
-  if (s->last_msg == RRU_config) {
-    printf("Oran RRU_config\n");
-    rru_config_msg->type = RRU_config_ok;
-  }
-  return 0;
 }
 
 void oran_fh_if4p5_south_in(RU_t *ru, int *frame, int *slot)
@@ -340,8 +229,7 @@ void *get_internal_parameter(char *name)
 }
 
 __attribute__((__visibility__("default"))) int transport_init(openair0_device_t *device,
-                                                              openair0_config_t *openair0_cfg,
-                                                              eth_params_t *eth_params)
+                                                              openair0_config_t *openair0_cfg)
 {
   oran_eth_state_t *eth = calloc_or_fail(1, sizeof(*eth));
 
@@ -420,25 +308,15 @@ __attribute__((__visibility__("default"))) int transport_init(openair0_device_t 
   initNotifiedFIFO(&oran_sync_fifo);
   initNotifiedFIFO(&oran_sync_fifo_prach);
 
-  eth->e.flags = ETH_RAW_IF4p5_MODE;
-  eth->e.compression = NO_COMPRESS;
-  eth->e.if_name = eth_params->local_if_name;
-  eth->last_msg = (rru_config_msg_type_t)-1;
   eth->nCC = fh_config->nCC;
   eth->num_ports = fh_init.xran_ports;
 
+  device->host_type = RAU_HOST;
   device->transp_type = ETHERNET_TP;
   device->trx_start_func = trx_oran_start;
   device->trx_get_stats_func = trx_oran_get_stats;
-  device->trx_reset_stats_func = trx_oran_reset_stats;
   device->trx_end_func = trx_oran_end;
   device->trx_stop_func = trx_oran_stop;
-  device->trx_set_freq_func = trx_oran_set_freq;
-  device->trx_set_gains_func = trx_oran_set_gains;
-  device->trx_write_func = trx_oran_write_raw;
-  device->trx_read_func = trx_oran_read_raw;
-  device->trx_ctlsend_func = trx_oran_ctlsend;
-  device->trx_ctlrecv_func = trx_oran_ctlrecv;
   device->get_internal_parameter = get_internal_parameter;
   device->priv = eth;
   device->openair0_cfg = &openair0_cfg[0];

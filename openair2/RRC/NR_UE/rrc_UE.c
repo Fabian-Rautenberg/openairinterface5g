@@ -502,6 +502,10 @@ static void nr_rrc_process_sib1(NR_UE_RRC_INST_t *rrc, NR_UE_RRC_SI_INFO *SI_inf
   nr_ue_nas_t *nas = get_ue_nas_info(rrc->ue_id);
   nas->sn_id = plmn_id;
 
+  /* Extract 36-bit NR Cell Identity */
+  const NR_CellIdentity_t *ci = &sib1->cellAccessRelatedInfo.plmn_IdentityInfoList.list.array[0]->cellIdentity;
+  rrc->cell_identity = BIT_STRING_to_uint64(ci);
+
   nr_timer_start(&SI_info->sib1_timer);
   SI_info->sib1_validity = true;
   if (rrc->nrRrcState == RRC_STATE_IDLE_NR) {
@@ -1955,7 +1959,44 @@ static void nr_rrc_ue_decode_NR_BCCH_BCH_Message(NR_UE_RRC_INST_t *rrc,
 static void nr_rrc_ue_prepare_RRCReestablishmentRequest(NR_UE_RRC_INST_t *rrc)
 {
   uint8_t buffer[1024];
-  int buf_size = do_RRCReestablishmentRequest(buffer, rrc->reestablishment_cause, rrc->phyCellID, rrc->rnti); // old rnti
+
+  /* Compute shortMAC-I per TS 38.331 §5.3.7.4:
+   * over the ASN.1 encoded as per clause 8 VarShortMAC-Input;
+   * with the KRRCint key and integrity protection algorithm that was used in the source PCell
+   * of the PCell in which the trigger for the re-establishment occurred (other cases);
+   * with all input bits for COUNT, BEARER and DIRECTION set to binary ones */
+  AssertFatal(rrc->as_security_activated, "RRCReestablishmentRequest requires AS security to be activated\n");
+  uint8_t krrcint[16];
+  nr_derive_key(RRC_INT_ALG, rrc->integrityProtAlgorithm, rrc->kgnb, krrcint);
+
+  uint8_t var_input[8] = {0};
+  /* Write 62 bits MSB-first into var_input */
+  uint64_t hi = ((uint64_t)rrc->reestab_source_pci << 54) | (rrc->cell_identity << 18) | ((uint64_t)rrc->reestab_source_crnti << 2);
+  var_input[0] = (hi >> 56) & 0xFF;
+  var_input[1] = (hi >> 48) & 0xFF;
+  var_input[2] = (hi >> 40) & 0xFF;
+  var_input[3] = (hi >> 32) & 0xFF;
+  var_input[4] = (hi >> 24) & 0xFF;
+  var_input[5] = (hi >> 16) & 0xFF;
+  var_input[6] = (hi >> 8) & 0xFF;
+  var_input[7] = hi & 0xFF;
+
+  stream_security_context_t *ctx = stream_integrity_init(rrc->integrityProtAlgorithm, krrcint);
+  AssertFatal(ctx != NULL, "Failed to initialise integrity context for integrityProtAlgorithm %d\n", rrc->integrityProtAlgorithm);
+  nas_stream_cipher_t cipher = {
+      .context = ctx,
+      .count = 0xffffffff,
+      .bearer = 0x1f,
+      .direction = SECU_DIRECTION_DOWNLINK,
+      .message = var_input,
+      .blength = 64, /* 8 bytes: 62 bits content + 2 zero padding bits */
+  };
+  uint8_t mac[4];
+  stream_compute_integrity((eia_alg_id_e)rrc->integrityProtAlgorithm, &cipher, mac);
+  stream_integrity_free(rrc->integrityProtAlgorithm, ctx);
+  uint16_t short_mac_i = ((uint16_t)mac[2] << 8) | mac[3];
+
+  int buf_size = do_RRCReestablishmentRequest(buffer, rrc->reestablishment_cause, rrc->reestab_source_pci, rrc->reestab_source_crnti, short_mac_i);
   nr_rlc_srb_recv_sdu(rrc->ue_id, 0, buffer, buf_size);
 }
 
@@ -3403,6 +3444,8 @@ void nr_rrc_ue_process_sidelink_radioResourceConfig(NR_SetupRelease_SL_ConfigDed
 static void nr_rrc_initiate_rrcReestablishment(NR_UE_RRC_INST_t *rrc, NR_ReestablishmentCause_t cause)
 {
   rrc->reestablishment_cause = cause;
+  rrc->reestab_source_pci = rrc->phyCellID;
+  rrc->reestab_source_crnti = rrc->rnti;
 
   NR_UE_Timers_Constants_t *timers = &rrc->timers_and_constants;
 
