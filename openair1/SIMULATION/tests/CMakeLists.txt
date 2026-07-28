@@ -110,6 +110,7 @@ add_physim_test(physim.5g.nr_dlsim.offset.test2 "106 PRB 51 PDSCH-Offset" nr_dls
 add_physim_test(physim.5g.nr_dlsim.offset.test3 "217 PRB 100 PDSCH-PRBs" nr_dlsim -P -n300 -R217 -b100 -s5)
 add_physim_test(physim.5g.nr_dlsim.offset.test4 "217 PRB 80 PDSCH-Offset" nr_dlsim -P -n300 -R217 -a80 -s5)
 add_physim_test(physim.5g.nr_dlsim.offset.test5 "217 PRB 100 PDSCH-PRBs 110 PDSCH-Offset" nr_dlsim -P -n300 -R217 -a110 -s5 -b100)
+add_physim_test(physim.5g.nr_dlsim.offset.test6 "106 PRB TYPE0 32:47 64:79" nr_dlsim -P -n300 -R106 -D 32:16,64:16 -s5)
 add_physim_test(physim.5g.nr_dlsim.mcs.mimo.test1 "106 PRBs 50 PDSCH-PRBs MCS Index 27" nr_dlsim -P -n300 -e27 -s30)
 add_physim_test(physim.5g.nr_dlsim.mcs.mimo.test2 "106 PRBs 50 PDSCH-PRBs MCS Index 16" nr_dlsim -P -n300 -e16 -s11 -S13)
 add_physim_test(physim.5g.nr_dlsim.mcs.mimo.test3 "106 MCS-TABLE 256 QAM MCS Index 26" nr_dlsim -P -n300 -q1 -e26 -s30)
@@ -261,6 +262,17 @@ add_physim_test(physim.5g.nr_ulsim.3gpp.test25 "3GPP G-FR1-A3-27, PUSCH Type B, 
 add_physim_test(physim.5g.nr_ulsim.3gpp.test26 "3GPP G-FR1-A3-27, PUSCH Type B, 40 MHz BW, 30 kHz SCS, 4 RX Antennas Requirements Test, 2 layers" nr_ulsim -P -n300 -b14 -I15 -i 0,1 -g B,l -t70 -u 1 -m2 -R106 -r106 -U 1,1,1,2 -W2 -y2 -z4 -s-2.1 -S-2.1)
 add_physim_test(physim.5g.nr_ulsim.3gpp.test27 "3GPP G-FR1-A4-27, PUSCH Type B, 40 MHz BW, 30 kHz SCS, 2 RX Antennas Requirements Test, 2 layers" nr_ulsim -P -n300 -b14 -I15 -i 0,1 -g C,l -t70 -u 1 -m16 -R106 -r106 -U 1,1,1,2 -W2 -y2 -z2 -s18.7 -S18.7)
 add_physim_test(physim.5g.nr_ulsim.3gpp.test28 "3GPP G-FR1-A4-27, PUSCH Type B, 40 MHz BW, 30 kHz SCS, 4 RX Antennas Requirements Test, 2 layers" nr_ulsim -P -n300 -b14 -I15 -i 0,1 -g C,l -t70 -u 1 -m16 -R106 -r106 -U 1,1,1,2 -W2 -y2 -z4 -s11.2 -S11.2)
+
+####################################################################################
+######                           nr_ulsim_mu_mimo unit test                   ######
+####################################################################################
+
+add_physim_test(physim.5g.nr_ulsim_mu_mimo.test1 "UEs 2 MCS 2 PRBs 106 SNR 1.7" nr_ulsim_mu_mimo -P -n300 -b14 -I15 -i 0,1 -g B,l -t90 -u 1 -m2 -R106 -r106 -U 1,1,1,2 -W1 -y1 -z2 -s1.7 -S1.7 -N2)
+add_physim_test(physim.5g.nr_ulsim_mu_mimo.test2 "UEs 2 MCS 2 PRBs 106 SNR -2.1" nr_ulsim_mu_mimo -P -n300 -b14 -I15 -i 0,1 -g B,l -t90 -u 1 -m2 -R106 -r106 -U 1,1,1,2 -W1 -y1 -z4 -s-2.1 -S-2.1 -N2)
+add_physim_test(physim.5g.nr_ulsim_mu_mimo.test3 "UEs 2 MCS 16 PRBs 217 SNR 18.7" nr_ulsim_mu_mimo -P -n300 -b14 -I15 -i 0,1 -g C,l -t90 -u 1 -m16 -R217 -r217 -U 1,1,1,2 -W1 -y1 -z2 -s18.7 -S18.7 -N2)
+add_physim_test(physim.5g.nr_ulsim_mu_mimo.test4 "UEs 2 MCS 16 PRBs 273 SNR 11.2" nr_ulsim_mu_mimo -P -n300 -b14 -I15 -i 0,1 -g C,l -t90 -u 1 -m16 -R273 -r273 -U 1,1,1,2 -W1 -y1 -z4 -s11.2 -S11.2 -N2)
+add_physim_test(physim.5g.nr_ulsim_mu_mimo.test5 "UEs 2 MCS 27 PRBs 106 SNR 30 QAM 256 " nr_ulsim_mu_mimo -P -n300 -b14 -I15 -i 0,1 -g C,l -t65 -u 1 -m27 -q1 -R106 -r106 -U 1,1,1,2 -W1 -y1 -z4 -s30 -S30 -N2)
+
 
 ####################################################################################
 ######                           nr_prachsim unit test                        ######

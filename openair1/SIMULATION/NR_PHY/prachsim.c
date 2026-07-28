@@ -40,7 +40,6 @@
 #include "common/utils/LOG/log.h"
 #include "common/utils/T/T.h"
 #include "common/utils/load_module_shlib.h"
-#include "common_lib.h"
 #include "defs.h"
 #include "executables/nr-uesoftmodem.h"
 #include "fapi_nr_ue_interface.h"

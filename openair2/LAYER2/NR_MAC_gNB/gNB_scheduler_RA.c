@@ -815,7 +815,7 @@ static void nr_generate_Msg3_retransmission(module_id_t module_idP,
   int buffer_index = ul_buffer_index(sched_frame, sched_slot, slots_frame, nr_mac->vrb_map_UL_size);
   uint16_t *vrb_map_UL = &nr_mac->common_channels[CC_id].vrb_map_UL[beam_ul.idx][buffer_index * MAX_BWP_SIZE];
 
-  NR_pusch_dmrs_t dmrs_info = get_ul_dmrs_params(scc, ul_bwp, &tda_info, 1);
+  NR_pusch_dmrs_t dmrs_info = get_ul_dmrs_params(scc, ul_bwp, &tda_info, 1, 0, 0);
   int num_dmrs_symb = count_bits64_with_mask(dmrs_info.ul_dmrs_symb_pos, tda_info.startSymbolIndex, tda_info.nrOfSymbols);
   int TBS = 0, mcsindex = 0, R = 0, Qm = 0;
   while(TBS < 7) {  // TBS for msg3 is 7 bytes (except for RRCResumeRequest1 currently not implemented)
@@ -1262,7 +1262,7 @@ nr_add_msg3(module_id_t module_idP, int CC_id, frame_t frameP, slot_t slotP, NR_
   future_ul_tti_req->pdus_list[future_ul_tti_req->n_pdus].pdu_size = sizeof(nfapi_nr_pusch_pdu_t);
 
   NR_tda_info_t tda_info = get_ul_tda_info(ul_bwp, 0, NR_SearchSpace__searchSpaceType_PR_common, TYPE_TC_RNTI_, ra->Msg3_tda_id);
-  NR_pusch_dmrs_t dmrs_info = get_ul_dmrs_params(scc, ul_bwp, &tda_info, 1);
+  NR_pusch_dmrs_t dmrs_info = get_ul_dmrs_params(scc, ul_bwp, &tda_info, 1, 0, 0);
   int num_dmrs_symb = count_bits64_with_mask(dmrs_info.ul_dmrs_symb_pos, tda_info.startSymbolIndex, tda_info.nrOfSymbols);
   int TBS = 0, mcsindex = 0, R = 0, Qm = 0;
   while(TBS < 7) {  // TBS for msg3 is 7 bytes (except for RRCResumeRequest1 currently not implemented)
@@ -1715,6 +1715,7 @@ static void nr_generate_Msg2(module_id_t module_idP,
       .pm_index = 0,
       .tb_size = TBS,
       .bwp_info = bwp_info,
+      .alloc_type = PDSCH_TYPE1,
       .rbStart = rbStart,
       .rbSize = rbSize,
       // no of layers 1 and pmi 0 gives only one log antenna port
@@ -2014,6 +2015,7 @@ static void nr_generate_Msg4_MsgB(module_id_t module_idP,
         .bwp_info = bwp_info,
         .rbStart = rbStart,
         .rbSize = rbSize,
+        .alloc_type = PDSCH_TYPE1,
         .ant_port_idx = {.numSpatialStreamIndices = 1,
                          .spatialStreamIndices[0] = nr_mac->radio_config.spatial_stream_index[beam.idx * num_log_ports]}};
 

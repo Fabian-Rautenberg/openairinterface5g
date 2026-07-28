@@ -25,7 +25,6 @@
 #include <malloc.h>
 #include <string.h>
 #include <math.h>
-#include "common_lib.h"
 #include "fapi_nr_ue_interface.h"
 #include "assertions.h"
 #include "common/utils/barrier/barrier.h"
@@ -57,6 +56,11 @@
 //       (0  + 0 * 20) % 512 = 0
 #define NUM_PROCESS_SLOT_TX_BARRIERS 512
 
+// CSI for tracking can have up to 2 resources per slot
+#define MAX_CSI_RES_SLOT 2
+// Threshold to change radio frequency
+#define TRS_CFO_THRESH 500
+
 #include "impl_defs_nr.h"
 #include "time_meas.h"
 #include "PHY/CODING/coding_defs.h"
@@ -71,7 +75,6 @@
 #endif
 
 #include <pthread.h>
-#include "radio/COMMON/common_lib.h"
 #include "NR_IF_Module.h"
 
 /// Context data structure for gNB subframe processing
@@ -440,7 +443,22 @@ typedef struct PHY_VARS_NR_UE_s {
   Actor_t *ul_actors;
   pthread_t main_thread;
   pthread_t stat_thread;
+  // Per-DL-actor pre-allocated PDSCH scratch buffers (one set per actor to avoid races)
+  struct pdsch_scratch_s {
+    c16_t   *rxdataF_comp;          // [NR_SYMBOLS_PER_SLOT][NR_MAX_NB_LAYERS][pdsch_buf_size_max]
+    c16_t   *dl_ch_mag;             // [NR_SYMBOLS_PER_SLOT][NR_MAX_NB_LAYERS][pdsch_buf_size_max]
+    c16_t   *dl_ch_magb;            // [NR_SYMBOLS_PER_SLOT][NR_MAX_NB_LAYERS][pdsch_buf_size_max]
+    c16_t   *dl_ch_magr;            // [NR_SYMBOLS_PER_SLOT][NR_MAX_NB_LAYERS][pdsch_buf_size_max]
+    c16_t   *rho_dl;                // [NR_SYMBOLS_PER_SLOT][NR_MAX_NB_LAYERS*NR_MAX_NB_LAYERS][pdsch_buf_size_max]
+    int32_t *pdsch_dl_ch_estimates; // [nb_antennas_rx*NR_MAX_NB_LAYERS][pdsch_est_size]
+    int16_t *llr[2];               // [2 codewords][llr_buf_max]
+    uint32_t pdsch_buf_size_max;
+    uint32_t pdsch_est_size;
+    uint32_t llr_buf_max;
+  } *pdsch_scratch;
+  int pdsch_num_actors;
 } PHY_VARS_NR_UE;
+typedef struct pdsch_scratch_s pdsch_scratch_t;
 
 typedef struct {
   openair0_timestamp_t timestamp_tx;
@@ -555,7 +573,8 @@ typedef struct nr_phy_data_s {
   int n_dlsch_codewords;
   // Sidelink Rx action decided by MAC
   sl_nr_rx_config_type_enum_t sl_rx_action;
-  NR_UE_CSI_RS csirs_vars;
+  int num_csirs;
+  NR_UE_CSI_RS csirs_vars[MAX_CSI_RES_SLOT];
   NR_UE_CSI_IM csiim_vars;
 } nr_phy_data_t;
 

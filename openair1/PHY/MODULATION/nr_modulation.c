@@ -7,8 +7,10 @@
 #include "PHY/NR_REFSIG/nr_mod_table.h"
 #include "executables/softmodem-common.h"
 #include <simde/x86/avx512.h>
-// Lacking declaration in present simde external package, will be detected as compilation error when they will add it
+// Lacking declaration in older implementations of simde external package, so let's keep it for now to be backwards compatible
+#if !defined(simde_mm512_extracti64x2_epi64)
 #define simde_mm512_extracti64x2_epi64(a...) _mm512_extracti64x2_epi64(a)
+#endif
 
 // #define DEBUG_DLSCH_PRECODING_PRINT_WITH_TRIVIAL // TODO: For debug, to be removed if want to merge to develop
 // #define DEBUG_LAYER_MAPPING

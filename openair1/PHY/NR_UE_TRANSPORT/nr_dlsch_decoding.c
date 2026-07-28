@@ -147,9 +147,12 @@ void nr_dlsch_decoding(PHY_VARS_NR_UE *phy_vars_ue,
         TB_parameters.C,
         TB_parameters.Qm,
         TB_parameters.llr);
+  int E = nr_get_E(TB_parameters.G, TB_parameters.C, TB_parameters.Qm, TB_parameters.nb_layers, 0);
+  if (E < 0)
+    return;
   TB_parameters.c = harq_process->c;
   TB_parameters.d = harq_process->d;
-  TB_parameters.E = nr_get_E(TB_parameters.G, TB_parameters.C, TB_parameters.Qm, TB_parameters.nb_layers, 0);
+  TB_parameters.E = E;
   TB_parameters.E2 = TB_parameters.E;
   TB_parameters.first_rE2 = TB_parameters.C;
   for (int r = 1; r < TB_parameters.C; r++) {

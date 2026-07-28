@@ -11,6 +11,7 @@
 extern "C" {
 #include <intertask_interface.h>
 #include <common/utils/system.h>
+#include <common/utils/utils.h>
 #include "executables/softmodem-common.h"
 
 typedef struct timer_elm_s {
@@ -40,11 +41,11 @@ typedef struct timer_elm_s {
   static int nb_queues=0;
   static pthread_mutex_t lock_nb_queues;
 
-  void *itti_malloc(task_id_t origin_task_id, task_id_t destination_task_id, ssize_t size) {
-    void *ptr = NULL;
-    AssertFatal ((ptr=calloc (size, 1)) != NULL, "Memory allocation of %zu bytes failed (%d -> %d)!\n",
-                 size, origin_task_id, destination_task_id);
-    return ptr;
+  void *itti_malloc(task_id_t origin_task_id, task_id_t destination_task_id, ssize_t size)
+  {
+    UNUSED(origin_task_id);
+    UNUSED(destination_task_id);
+    return calloc_or_fail(1, size);
   }
 
   int itti_free(task_id_t task_id, void *ptr) {

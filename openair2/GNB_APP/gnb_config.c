@@ -33,7 +33,6 @@
 #include "common/openairinterface5g_limits.h"
 #include "common/ran_context.h"
 #include "common/utils/T/T.h"
-#include "common_lib.h"
 #include "constr_TYPE.h"
 #include "enb_paramdef.h"
 #include "executables/softmodem-common.h"
@@ -60,6 +59,7 @@
 #include "x2ap_messages_types.h"
 #include "gnb_config_common.h"
 #include "positioning_nr_paramdef.h"
+#include "f1ap_cu_task.h"
 
 static int DEFBANDS[] = {7};
 static int DEFENBS[] = {0};
@@ -687,7 +687,7 @@ void RCconfig_nr_prs(void)
         for (int l = 0; l < PRS_ParamList.paramarray[j][PRS_MUTING_PATTERN1_LIST].numelt; l++)
         {
           prs_config->MutingPattern1[l]      = PRS_ParamList.paramarray[j][PRS_MUTING_PATTERN1_LIST].uptr[l];
-          if (k == 0) // print only for 0th resource 
+          if (k == 0) // print only for 0th resource
             snprintf(str[5]+strlen(str[5]),sizeof(str[5])-strlen(str[5]),"%d, ",prs_config->MutingPattern1[l]);
         }
         for (int l = 0; l < PRS_ParamList.paramarray[j][PRS_MUTING_PATTERN2_LIST].numelt; l++)
@@ -1670,30 +1670,32 @@ void RCconfig_nr_macrlc(configmodule_interface_t *cfg)
       } else if (strcmp(*gpd(params, np, MACRLC_TRANSPORT_N_PREFERENCE)->strptr, "f1") == 0
                  || strcmp(*gpd(params, np, MACRLC_TRANSPORT_N_PREFERENCE)->strptr, "cudu") == 0) {
         char **f1caddr = gpd(params, np, MACRLC_LOCAL_N_ADDRESS)->strptr;
-        RC.nrmac[j]->eth_params_n.my_addr = strdup(*f1caddr);
         char **f1uaddr = gpd(params, np, MACRLC_LOCAL_N_ADDRESS_F1U)->strptr;
-        RC.nrmac[j]->f1u_addr = f1uaddr != NULL ? strdup(*f1uaddr) : strdup(*f1caddr);
-        RC.nrmac[j]->eth_params_n.remote_addr = strdup(*gpd(params, np, MACRLC_REMOTE_N_ADDRESS)->strptr);
-        RC.nrmac[j]->eth_params_n.my_portc = 0; // not used
-        RC.nrmac[j]->eth_params_n.remote_portc = 0; // not used
-        RC.nrmac[j]->eth_params_n.my_portd = *gpd(params, np, MACRLC_LOCAL_N_PORTD)->iptr;
-        RC.nrmac[j]->eth_params_n.remote_portd = *gpd(params, np, MACRLC_REMOTE_N_PORTD)->iptr;
-        RC.nrmac[j]->eth_params_n.transp_preference = ETH_UDP_MODE;
+        f1ap_net_config_t nc = {
+          .CU_f1_ip_address = strdup(*gpd(params, np, MACRLC_REMOTE_N_ADDRESS)->strptr),
+          .DU_f1c_ip_address = strdup(*f1caddr),
+          .DU_f1u_ip_address = f1uaddr != NULL ? strdup(*f1uaddr) : strdup(*f1caddr),
+          .DUport = *gpd(params, np, MACRLC_LOCAL_N_PORTD)->iptr,
+          .CUport = *gpd(params, np, MACRLC_REMOTE_N_PORTD)->iptr,
+        };
+        RC.nrmac[j]->net_config = nc;
+        LOG_I(F1AP,
+              "F1-C DU IPaddr %s, connect to F1-C CU %s, binding GTP to %s ports local %d remote %d\n",
+              nc.DU_f1c_ip_address,
+              nc.CU_f1_ip_address,
+              nc.DU_f1u_ip_address,
+              nc.DUport,
+              nc.CUport);
       } else { // other midhaul
         AssertFatal(1 == 0, "MACRLC %d: %s unknown northbound midhaul\n", j, *gpd(params, np, MACRLC_TRANSPORT_N_PREFERENCE)->strptr);
       }
 
       if (strcmp(*gpd(params, np, MACRLC_TRANSPORT_S_PREFERENCE)->strptr, "local_L1") == 0) {
       } else if (strcmp(*gpd(params, np, MACRLC_TRANSPORT_S_PREFERENCE)->strptr, "nfapi") == 0) {
-        eth_params_t p = {
-          .my_addr = strdup(*gpd(params, np, MACRLC_LOCAL_S_ADDRESS)->strptr),
-          .remote_addr = strdup(*gpd(params, np, MACRLC_REMOTE_S_ADDRESS)->strptr),
-          .my_portc = *gpd(params, np, MACRLC_LOCAL_S_PORTC)->iptr,
-          .remote_portc = 0, // not used
-          .my_portd = *gpd(params, np, MACRLC_LOCAL_S_PORTD)->iptr,
-          .remote_portd = 0, // not used
-        };
-        configure_nr_nfapi_vnf(p);
+        const char *vnf_addr = *gpd(params, np, MACRLC_LOCAL_S_ADDRESS)->strptr;
+        uint16_t p5_port = *gpd(params, np, MACRLC_LOCAL_S_PORTC)->iptr;
+        uint16_t p7_port = *gpd(params, np, MACRLC_LOCAL_S_PORTD)->iptr;
+        configure_nr_nfapi_vnf(vnf_addr, p5_port, p7_port);
       } else if(strcmp(*gpd(params, np, MACRLC_TRANSPORT_S_PREFERENCE)->strptr, "aerial") == 0){
 #ifdef ENABLE_AERIAL
         nvipc_params_t nvipc_p = {
@@ -1702,8 +1704,8 @@ void RCconfig_nr_macrlc(configmodule_interface_t *cfg)
         };
         RC.nrmac[j]->nvipc_params_s = nvipc_p;
         LOG_I(GNB_APP, "Configuring VNF for Aerial connection with prefix %s\n", nvipc_p.nvipc_shm_prefix);
-        eth_params_t p = {0}; // not actually used but API requires it
-        configure_nr_nfapi_vnf(p);
+        // parameters are for socket-based communication, irrelevant for Aerial
+        configure_nr_nfapi_vnf(NULL, 0xffff, 0xffff);
 
 #endif
       } else { // other midhaul
@@ -1731,6 +1733,21 @@ void RCconfig_nr_macrlc(configmodule_interface_t *cfg)
       else
         ul_bler_options->harq_round_max = *gpd(params, np, MACRLC_UL_HARQ_ROUND_MAX)->u8ptr;
       RC.nrmac[j]->min_grant_prb = *gpd(params, np, MACRLC_MIN_GRANT_PRB)->u16ptr;
+      long sc_fdma = NR_PUSCH_Config__transformPrecoder_enabled;
+      NR_BWP_UplinkCommon_t *bwp = RC.nrmac[j]->common_channels[0].ServingCellConfigCommon->uplinkConfigCommon->initialUplinkBWP;
+      if (bwp->rach_ConfigCommon->choice.setup->msg3_transformPrecoder != NULL)
+        sc_fdma = *bwp->rach_ConfigCommon->choice.setup->msg3_transformPrecoder;
+      int new_min = check_sc_fdma_rbsize(sc_fdma, RC.nrmac[j]->min_grant_prb);
+      // NR_PUSCH_Config__transformPrecoder_enabled	= 0 |	NR_PUSCH_Config__transformPrecoder_disabled	= 1, so !uses_sc_fdma should
+      // be used
+      if (sc_fdma == NR_PUSCH_Config__transformPrecoder_enabled && RC.nrmac[j]->min_grant_prb != new_min) {
+        LOG_W(NR_MAC,
+              "min_rb value is set as %d. In SC-FDMA, it should be under format 2^x*3^y*5^z and has been automatically decreased "
+              "to %d.\n",
+              RC.nrmac[j]->min_grant_prb,
+              new_min);
+        RC.nrmac[j]->min_grant_prb = new_min;
+      }
       RC.nrmac[j]->identity_pm = *gpd(params, np, MACRLC_IDENTITY_PM)->u8ptr;
       // PRB Blacklist
       uint16_t prbbl[MAX_BWP_SIZE] = {0};
@@ -1817,7 +1834,7 @@ void RCconfig_nr_macrlc(configmodule_interface_t *cfg)
 
     if (IS_SA_MODE(get_softmodem_params()))
       nr_mac_configure_sib1(RC.nrmac[0], &info.plmn, info.nr_cellid, *info.tac);
-    
+
     // read F1 Setup information from config and generated MIB/SIB1
     // and store it at MAC for sending later
     NR_BCCH_BCH_Message_t *mib = RC.nrmac[0]->common_channels[0].mib;
@@ -2388,30 +2405,21 @@ gNB_RRC_INST *RCconfig_NRRRC()
       LOG_I(GNB_APP,"F1AP: gNB_CU_id[%d] %d\n", k, rrc->node_id);
       rrc->node_name = strdup(*(GNBParamList.paramarray[0][GNB_GNB_NAME_IDX].strptr));
       LOG_I(GNB_APP,"F1AP: gNB_CU_name[%d] %s\n", k, rrc->node_name);
-      rrc->eth_params_s.my_addr                  = strdup(*(GNBParamList.paramarray[i][GNB_LOCAL_S_ADDRESS_IDX].strptr));
-      rrc->eth_params_s.remote_addr              = strdup(*(GNBParamList.paramarray[i][GNB_REMOTE_S_ADDRESS_IDX].strptr));
-      rrc->eth_params_s.my_portc                 = *(GNBParamList.paramarray[i][GNB_LOCAL_S_PORTC_IDX].uptr);
-      rrc->eth_params_s.remote_portc             = *(GNBParamList.paramarray[i][GNB_REMOTE_S_PORTC_IDX].uptr);
-      rrc->eth_params_s.my_portd                 = *(GNBParamList.paramarray[i][GNB_LOCAL_S_PORTD_IDX].uptr);
-      rrc->eth_params_s.remote_portd             = *(GNBParamList.paramarray[i][GNB_REMOTE_S_PORTD_IDX].uptr);
-      rrc->eth_params_s.transp_preference        = ETH_UDP_MODE;
+      f1ap_cu_conf_t *c = calloc_or_fail(1, sizeof(*c));
+      c->type = rrc->node_type;
+      c->bind_addr = strdup(*(GNBParamList.paramarray[i][GNB_LOCAL_S_ADDRESS_IDX].strptr));
+      c->local_f1u_port = *GNBParamList.paramarray[i][GNB_LOCAL_S_PORTD_IDX].uptr;
+      c->remote_f1u_port = *GNBParamList.paramarray[i][GNB_REMOTE_S_PORTD_IDX].uptr;
+      // GNB_REMOTE_S_ADDRESS_IDX not used
+      // GNB_LOCAL_S_PORTC_IDX not used
+      // GNB_REMOTE_S_PORTC_IDX not used
+      ittiTask_parms_t p = {.args_to_start_routine = c};
+      int rc = itti_create_task(TASK_CU_F1, F1AP_CU_task, &p);
+      AssertFatal(rc == 0, "Create task for F1AP CU failed\n");
     }
 
-    if (strcmp(*(GNBParamList.paramarray[i][GNB_TRANSPORT_S_PREFERENCE_IDX].strptr), "local_mac") == 0) {
-      
-    } else if (strcmp(*(GNBParamList.paramarray[i][GNB_TRANSPORT_S_PREFERENCE_IDX].strptr), "cudu") == 0) {
-      rrc->eth_params_s.my_addr                  = strdup(*(GNBParamList.paramarray[i][GNB_LOCAL_S_ADDRESS_IDX].strptr));
-      rrc->eth_params_s.remote_addr              = strdup(*(GNBParamList.paramarray[i][GNB_REMOTE_S_ADDRESS_IDX].strptr));
-      rrc->eth_params_s.my_portc                 = *(GNBParamList.paramarray[i][GNB_LOCAL_S_PORTC_IDX].uptr);
-      rrc->eth_params_s.remote_portc             = *(GNBParamList.paramarray[i][GNB_REMOTE_S_PORTC_IDX].uptr);
-      rrc->eth_params_s.my_portd                 = *(GNBParamList.paramarray[i][GNB_LOCAL_S_PORTD_IDX].uptr);
-      rrc->eth_params_s.remote_portd             = *(GNBParamList.paramarray[i][GNB_REMOTE_S_PORTD_IDX].uptr);
-      rrc->eth_params_s.transp_preference        = ETH_UDP_MODE;
-    } else { // other midhaul
-    }       
-    
     // search if in active list
-    
+
     nr_rrc_config_t nrrrc_config = {0};
     for (k=0; k <num_gnbs ; k++) {
       if (strcmp(GNBSParams[GNB_ACTIVE_GNBS_IDX].strlistptr[k], *(GNBParamList.paramarray[i][GNB_GNB_NAME_IDX].strptr) )== 0) {
@@ -2435,7 +2443,7 @@ gNB_RRC_INST *RCconfig_NRRRC()
 
         nrrrc_config.num_plmn = set_plmn_config(nrrrc_config.plmn, k);
         nrrrc_config.enable_sdap = *GNBParamList.paramarray[i][GNB_ENABLE_SDAP_IDX].iptr;
-        LOG_I(GNB_APP, "SDAP layer is %s\n", nrrrc_config.enable_sdap ? "enabled" : "disabled");
+        LOG_I(GNB_APP, "SDAP UL/DL headers in RRC are %s\n", nrrrc_config.enable_sdap ? "present" : "absent");
         nrrrc_config.um_on_default_drb = *(GNBParamList.paramarray[i][GNB_UMONDEFAULTDRB_IDX].uptr);
 
       }//
@@ -2758,7 +2766,7 @@ int gNB_app_handle_f1ap_gnb_cu_configuration_update(f1ap_gnb_cu_configuration_up
     // generate gNB_CU_CONFIGURATION_UPDATE_ACKNOWLEDGE
     msg_ack_p = itti_alloc_new_message (TASK_GNB_APP, 0, F1AP_GNB_CU_CONFIGURATION_UPDATE_ACKNOWLEDGE);
     F1AP_GNB_CU_CONFIGURATION_UPDATE_ACKNOWLEDGE(msg_ack_p).num_cells_failed_to_be_activated = 0;
-    F1AP_GNB_CU_CONFIGURATION_UPDATE_ACKNOWLEDGE(msg_ack_p).have_criticality = 0; 
+    F1AP_GNB_CU_CONFIGURATION_UPDATE_ACKNOWLEDGE(msg_ack_p).have_criticality = 0;
     F1AP_GNB_CU_CONFIGURATION_UPDATE_ACKNOWLEDGE(msg_ack_p).noofTNLAssociations_to_setup =0;
     F1AP_GNB_CU_CONFIGURATION_UPDATE_ACKNOWLEDGE(msg_ack_p).noofTNLAssociations_failed = 0;
     F1AP_GNB_CU_CONFIGURATION_UPDATE_ACKNOWLEDGE(msg_ack_p).noofDedicatedSIDeliveryNeededUEs = 0;
@@ -2781,7 +2789,7 @@ int gNB_app_handle_f1ap_gnb_cu_configuration_update(f1ap_gnb_cu_configuration_up
 ngran_node_t get_node_type(void)
 {
   GET_PARAMS_LIST(GNBParamList, GNBParams, GNBPARAMS_DESC, GNB_CONFIG_STRING_GNB_LIST, NULL);
-  if (GNBParamList.numelt == 0) // We have no valid configuration, let's return a default 
+  if (GNBParamList.numelt == 0) // We have no valid configuration, let's return a default
     return ngran_gNB;
 
   // MAC/RLC params

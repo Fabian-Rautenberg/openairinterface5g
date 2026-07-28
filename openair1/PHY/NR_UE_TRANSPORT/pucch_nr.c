@@ -733,26 +733,15 @@ void nr_generate_pucch2(c16_t **txdataF,
     const int seq_sz = ((startingPRB + pucch_pdu->prb_size) * NR_PUCCH_DMRS_RB * DMRS_MOD_ORDER + 31) / 32;
     uint32_t *seq = gold_cache(temp_x2, seq_sz);
     for (int rb=0; rb<pucch_pdu->prb_size; rb++) {
-      //startingPRB = startingPRB + rb;
-      const bool nb_rb_is_even = frame_parms->N_RB_DL & 1;
+      const bool nb_rb_is_even = !(frame_parms->N_RB_DL & 1);
       const int halfRBs = frame_parms->N_RB_DL / 2;
       const int baseRB = rb + startingPRB;
-      int re_offset = (l + startingSymbolIndex) * frame_parms->ofdm_symbol_size + 12 * baseRB;
-      if (nb_rb_is_even) {
-        if (baseRB < halfRBs) // if number RBs in bandwidth is even and current PRB is lower band
-          re_offset += frame_parms->first_carrier_offset;
-        else
-          re_offset -= halfRBs;
-      } else {
-        if (baseRB < halfRBs) // if number RBs in bandwidth is odd  and current PRB is lower band
-          re_offset += frame_parms->first_carrier_offset;
-        else if (baseRB > halfRBs) // if number RBs in bandwidth is odd  and current PRB is upper band
-          re_offset += -halfRBs + 6;
-        else
-          re_offset += frame_parms->first_carrier_offset;
-      }
+      int re_offset = (l + startingSymbolIndex) * frame_parms->ofdm_symbol_size + NR_NB_SC_PER_RB * baseRB;
+      if (baseRB > halfRBs)
+        re_offset -= (nb_rb_is_even) ? (halfRBs * NR_NB_SC_PER_RB) : (halfRBs * NR_NB_SC_PER_RB + 6);
+      else
+        re_offset += frame_parms->first_carrier_offset;
 
-      //txptr = &txdataF[0][re_offset];
       int k=0;
 #ifdef DEBUG_NR_PUCCH_TX
       int kk=0;

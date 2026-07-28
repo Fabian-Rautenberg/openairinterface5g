@@ -48,7 +48,6 @@ def nsaTDDB200Status = ''
 def saTDDB200Status = ''
 def phytestLDPCoffloadStatus = ''
 def saAW2SStatus = ''
-def cn5gCOTSUESanityCheck = ''
 def saAERIALStatus = ''
 def saMultiAntennaStatus = ''
 def saFHI72Status = ''
@@ -708,29 +707,6 @@ pipeline {
               script {
                 currentBuild.result = 'FAILURE'
                 failingStages += saAW2SStatus
-              }
-            }
-          }
-        }
-        stage ("Sanity-Check OAI-CN5G") {
-          when { expression {do5Gtest} }
-          steps {
-            script {
-              triggerCN5GDownstreamJob ('OAI-CN5G-COTS-UE-Test')
-            }
-          }
-          post {
-            always {
-              script {
-                // Using a unique variable name for each test stage to avoid overwriting on a global variable
-                // due to parallel-time concurrency
-                cn5gCOTSUESanityCheck = finalizeDownstreamJob('OAI-CN5G-COTS-UE-Test')
-              }
-            }
-            failure {
-              script {
-                currentBuild.result = 'FAILURE'
-                failingStages += cn5gCOTSUESanityCheck
               }
             }
           }

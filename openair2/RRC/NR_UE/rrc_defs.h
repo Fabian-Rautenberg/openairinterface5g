@@ -206,12 +206,15 @@ typedef struct NR_UE_RRC_INST_s {
   rnti_t rnti;
   uint32_t phyCellID;
   long arfcn_ssb;
+  uint64_t cell_identity;
 
   OAI_NR_UECapability_t UECap;
   NR_UE_Timers_Constants_t timers_and_constants;
 
   RA_trigger_t ra_trigger;
   NR_ReestablishmentCause_t reestablishment_cause;
+  uint32_t reestab_source_pci;
+  rnti_t reestab_source_crnti;
   plmn_t plmnID;
 
   NR_BWP_Id_t dl_bwp_id;

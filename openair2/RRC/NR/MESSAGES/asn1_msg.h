@@ -139,7 +139,8 @@ int do_NR_ULInformationTransfer(uint8_t **buffer,
 int do_RRCReestablishmentRequest(uint8_t *buffer,
                                  NR_ReestablishmentCause_t cause,
                                  uint32_t cell_id,
-                                 uint16_t c_rnti);
+                                 uint16_t c_rnti,
+                                 uint16_t short_mac_i);
 
 int do_RRCReestablishment(int8_t nh_ncc, uint8_t *const buffer, size_t buffer_size, const uint8_t Transaction_id);
 

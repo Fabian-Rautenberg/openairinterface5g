@@ -13,7 +13,7 @@ add_library(ldpc_ors MODULE
             ../../nrLDPC_encoder/ldpc_encoder_optim8segmulti.c
 )
 target_include_directories(ldpc_ors PRIVATE ../nrLDPC_coding_segment)
-target_link_libraries(ldpc_ors PRIVATE ldpc_gen_HEADERS log_headers)
+target_link_libraries(ldpc_ors PRIVATE log_headers)
 set_target_properties(ldpc_ors PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 add_dependencies(nr-softmodem ldpc_ors)
 add_dependencies(nr-uesoftmodem ldpc_ors)

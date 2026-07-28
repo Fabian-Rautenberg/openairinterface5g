@@ -33,7 +33,6 @@
 #include "SCHED/sched_common.h"
 #include "common/utils/LOG/log.h"
 #include "common/utils/LOG/vcd_signal_dumper.h"
-#include "radio/COMMON/common_lib.h"
 #include "radio/ETHERNET/ethernet_lib.h"
 
 /* these variables have to be defined before including ENB_APP/enb_paramdef.h */
@@ -2357,7 +2356,6 @@ void set_function_spec_param(RU_t *ru) {
     case LOCAL_RF:   // this is an RU with integrated RF (RRU, eNB)
       if (ru->function ==  NGFI_RRU_IF5) {                 // IF5 RRU
         ru->do_prach              = 0;                      // no prach processing in RU
-        ru->fh_north_in           = NULL;                   // no shynchronous incoming fronthaul from north
         ru->fh_north_out          = fh_if5_north_out;       // need only to do send_IF5  reception
         ru->fh_south_out          = tx_rf;                  // send output to RF
         ru->fh_north_asynch_in    = fh_if5_north_asynch_in; // TX packets come asynchronously
@@ -2366,13 +2364,11 @@ void set_function_spec_param(RU_t *ru) {
         ru->feptx_prec            = NULL;                   // nothing (this is a time-domain signal)
         ru->start_if              = start_if;               // need to start the if interface for if5
         ru->ifdevice.host_type    = RRU_HOST;
-        ru->rfdevice.host_type    = RRU_HOST;
-        ru->ifdevice.eth_params   = &ru->eth_params;
         reset_meas(&ru->rx_fhaul);
         reset_meas(&ru->tx_fhaul);
         reset_meas(&ru->compression);
         reset_meas(&ru->transport);
-        ret = openair0_transport_load(&ru->ifdevice,&ru->openair0_cfg,&ru->eth_params);
+        ret = openair0_transport_load(&ru->ifdevice,&ru->openair0_cfg);
         LOG_I(PHY,"NGFI_RRU_IF5: openair0_transport_init returns %d for ru_id %d\n", ret, ru->idx);
 
         if (ret<0) {
@@ -2381,7 +2377,6 @@ void set_function_spec_param(RU_t *ru) {
         }
       } else if (ru->function == NGFI_RRU_IF4p5) {
         ru->do_prach              = 1;                        // do part of prach processing in RU
-        ru->fh_north_in           = NULL;                     // no synchronous incoming fronthaul from north
         ru->fh_north_out          = fh_if4p5_north_out;       // send_IF4p5 on reception
         ru->fh_south_out          = tx_rf;                    // send output to RF
         ru->fh_north_asynch_in    = fh_if4p5_north_asynch_in; // TX packets come asynchronously
@@ -2390,13 +2385,11 @@ void set_function_spec_param(RU_t *ru) {
         ru->feptx_prec            = NULL;
         ru->start_if              = start_if;                 // need to start the if interface for if4p5
         ru->ifdevice.host_type    = RRU_HOST;
-        ru->rfdevice.host_type    = RRU_HOST;
-        ru->ifdevice.eth_params   = &ru->eth_params;
         reset_meas(&ru->rx_fhaul);
         reset_meas(&ru->tx_fhaul);
         reset_meas(&ru->compression);
         reset_meas(&ru->transport);
-        ret = openair0_transport_load(&ru->ifdevice,&ru->openair0_cfg,&ru->eth_params);
+        ret = openair0_transport_load(&ru->ifdevice,&ru->openair0_cfg);
         LOG_I(PHY,"NGFI_RRU_if4p5 : openair0_transport_init returns %d for ru_id %d\n", ret, ru->idx);
 
         if (ret<0) {
@@ -2410,7 +2403,6 @@ void set_function_spec_param(RU_t *ru) {
         ru->feprx                = (get_thread_worker_conf() == WORKER_DISABLE) ? fep_full : ru_fep_full_2thread;                // RX DFTs
         ru->feptx_ofdm           = (get_thread_worker_conf() == WORKER_DISABLE) ? feptx_ofdm : feptx_ofdm_2thread;              // this is fep with idft and precoding
         ru->feptx_prec           = feptx_prec;              // this is fep with idft and precoding
-        ru->fh_north_in          = NULL;                    // no incoming fronthaul from north
         ru->fh_north_out         = NULL;                    // no outgoing fronthaul to north
         ru->start_if             = NULL;                    // no if interface
         ru->rfdevice.host_type   = RAU_HOST;
@@ -2449,13 +2441,12 @@ void set_function_spec_param(RU_t *ru) {
         ru->fh_south_out         = fh_if5_south_out;    // synchronous IF5 transmission
         ru->fh_south_asynch_in   = NULL;                // no asynchronous UL
       }
-      ru->start_rf               = ru->eth_params.transp_preference == ETH_UDP_IF5_ECPRI_MODE ? start_streaming : NULL;
+      ru->start_rf               = ru->ifdevice.eth_params.transp_preference == ETH_UDP_IF5_ECPRI_MODE ? start_streaming : NULL;
       ru->stop_rf                = NULL;
       ru->start_if               = start_if;             // need to start if interface for IF5
       ru->ifdevice.host_type     = RAU_HOST;
-      ru->ifdevice.eth_params    = &ru->eth_params;
       ru->ifdevice.configure_rru = configure_ru;
-      ret = openair0_transport_load(&ru->ifdevice,&ru->openair0_cfg,&ru->eth_params);
+      ret = openair0_transport_load(&ru->ifdevice,&ru->openair0_cfg);
       LOG_I(PHY,"REMOTE_IF5: openair0_transport_init returns %d for ru_id %d\n", ret, ru->idx);
 
       if (ret<0) {
@@ -2479,9 +2470,8 @@ void set_function_spec_param(RU_t *ru) {
       ru->stop_rf                = NULL;
       ru->start_if               = start_if;            // need to start if interface for IF4p5
       ru->ifdevice.host_type     = RAU_HOST;
-      ru->ifdevice.eth_params    = &ru->eth_params;
       ru->ifdevice.configure_rru = configure_ru;
-      ret = openair0_transport_load(&ru->ifdevice, &ru->openair0_cfg, &ru->eth_params);
+      ret = openair0_transport_load(&ru->ifdevice, &ru->openair0_cfg);
       LOG_I(PHY,"REMOTE IF4p5: openair0_transport_init returns %d for ru_id %d\n", ret, ru->idx);
 
       if (ret<0) {
@@ -2832,42 +2822,42 @@ RU_t **RCconfig_RU(int nb_RU,int nb_L1_inst,PHY_VARS_eNB ***eNB,uint64_t *ru_mas
           ru[j]->state                           = RU_RUN;
           printf("Setting function for RU %d to eNodeB_3GPP\n",j);
         } else {
-          ru[j]->eth_params.local_if_name            = strdup(*(RUParamList.paramarray[j][RU_LOCAL_IF_NAME_IDX].strptr));
-          ru[j]->eth_params.my_addr                  = strdup(*(RUParamList.paramarray[j][RU_LOCAL_ADDRESS_IDX].strptr));
-          ru[j]->eth_params.remote_addr              = strdup(*(RUParamList.paramarray[j][RU_REMOTE_ADDRESS_IDX].strptr));
-          ru[j]->eth_params.my_portd                 = *(RUParamList.paramarray[j][RU_LOCAL_PORTD_IDX].uptr);
-          ru[j]->eth_params.remote_portd             = *(RUParamList.paramarray[j][RU_REMOTE_PORTD_IDX].uptr);
+          ru[j]->ifdevice.eth_params.local_if_name            = strdup(*(RUParamList.paramarray[j][RU_LOCAL_IF_NAME_IDX].strptr));
+          ru[j]->ifdevice.eth_params.my_addr                  = strdup(*(RUParamList.paramarray[j][RU_LOCAL_ADDRESS_IDX].strptr));
+          ru[j]->ifdevice.eth_params.remote_addr              = strdup(*(RUParamList.paramarray[j][RU_REMOTE_ADDRESS_IDX].strptr));
+          ru[j]->ifdevice.eth_params.my_portd                 = *(RUParamList.paramarray[j][RU_LOCAL_PORTD_IDX].uptr);
+          ru[j]->ifdevice.eth_params.remote_portd             = *(RUParamList.paramarray[j][RU_REMOTE_PORTD_IDX].uptr);
 
           // Check if control port set
           if  (!(config_isparamset(RUParamList.paramarray[j],RU_REMOTE_PORTC_IDX)) ) {
             LOG_I(PHY,"Removing control port for RU %d\n",j);
             ru[j]->has_ctrl_prt            = 0;
           } else {
-            ru[j]->eth_params.my_portc                 = *(RUParamList.paramarray[j][RU_LOCAL_PORTC_IDX].uptr);
-            ru[j]->eth_params.remote_portc             = *(RUParamList.paramarray[j][RU_REMOTE_PORTC_IDX].uptr);
-            LOG_I(PHY," Control port %u \n",ru[j]->eth_params.my_portc);
+            ru[j]->ifdevice.eth_params.my_portc                 = *(RUParamList.paramarray[j][RU_LOCAL_PORTC_IDX].uptr);
+            ru[j]->ifdevice.eth_params.remote_portc             = *(RUParamList.paramarray[j][RU_REMOTE_PORTC_IDX].uptr);
+            LOG_I(PHY," Control port %u \n",ru[j]->ifdevice.eth_params.my_portc);
           }
 
           if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "udp") == 0) {
             ru[j]->if_south                        = LOCAL_RF;
             ru[j]->function                        = NGFI_RRU_IF5;
-            ru[j]->eth_params.transp_preference    = ETH_UDP_MODE;
+            ru[j]->ifdevice.eth_params.transp_preference    = ETH_UDP_MODE;
             LOG_I(PHY,"Setting function for RU %d to NGFI_RRU_IF5 (udp)\n",j);
           } else if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "raw") == 0) {
             ru[j]->if_south                        = LOCAL_RF;
             ru[j]->function                        = NGFI_RRU_IF5;
-            ru[j]->eth_params.transp_preference    = ETH_RAW_MODE;
+            ru[j]->ifdevice.eth_params.transp_preference    = ETH_RAW_MODE;
             LOG_I(PHY,"Setting function for RU %d to NGFI_RRU_IF5 (raw)\n",j);
           } else if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "udp_if4p5") == 0) {
             ru[j]->if_south                        = LOCAL_RF;
             ru[j]->function                        = NGFI_RRU_IF4p5;
-            ru[j]->eth_params.transp_preference    = ETH_UDP_IF4p5_MODE;
+            ru[j]->ifdevice.eth_params.transp_preference    = ETH_UDP_IF4p5_MODE;
             ru[j]->has_ctrl_prt                   =1;
             LOG_I(PHY,"Setting function for RU %d to NGFI_RRU_IF4p5 (udp)\n",j);
           } else if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "raw_if4p5") == 0) {
             ru[j]->if_south                        = LOCAL_RF;
             ru[j]->function                        = NGFI_RRU_IF4p5;
-            ru[j]->eth_params.transp_preference    = ETH_RAW_IF4p5_MODE;
+            ru[j]->ifdevice.eth_params.transp_preference    = ETH_RAW_IF4p5_MODE;
             ru[j]->has_ctrl_prt                   =1;
             LOG_I(PHY,"Setting function for RU %d to NGFI_RRU_IF4p5 (raw)\n",j);
           }
@@ -2883,35 +2873,35 @@ RU_t **RCconfig_RU(int nb_RU,int nb_L1_inst,PHY_VARS_eNB ***eNB,uint64_t *ru_mas
       } //strcmp(local_rf, "yes") == 0
       else {
         LOG_I(PHY,"RU %d: Transport %s\n",j,*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr));
-        ru[j]->eth_params.local_if_name      = strdup(*(RUParamList.paramarray[j][RU_LOCAL_IF_NAME_IDX].strptr));
-        ru[j]->eth_params.my_addr            = strdup(*(RUParamList.paramarray[j][RU_LOCAL_ADDRESS_IDX].strptr));
-        ru[j]->eth_params.remote_addr        = strdup(*(RUParamList.paramarray[j][RU_REMOTE_ADDRESS_IDX].strptr));
-        ru[j]->eth_params.my_portc           = *(RUParamList.paramarray[j][RU_LOCAL_PORTC_IDX].uptr);
-        ru[j]->eth_params.remote_portc       = *(RUParamList.paramarray[j][RU_REMOTE_PORTC_IDX].uptr);
-        ru[j]->eth_params.my_portd           = *(RUParamList.paramarray[j][RU_LOCAL_PORTD_IDX].uptr);
-        ru[j]->eth_params.remote_portd       = *(RUParamList.paramarray[j][RU_REMOTE_PORTD_IDX].uptr);
+        ru[j]->ifdevice.eth_params.local_if_name      = strdup(*(RUParamList.paramarray[j][RU_LOCAL_IF_NAME_IDX].strptr));
+        ru[j]->ifdevice.eth_params.my_addr            = strdup(*(RUParamList.paramarray[j][RU_LOCAL_ADDRESS_IDX].strptr));
+        ru[j]->ifdevice.eth_params.remote_addr        = strdup(*(RUParamList.paramarray[j][RU_REMOTE_ADDRESS_IDX].strptr));
+        ru[j]->ifdevice.eth_params.my_portc           = *(RUParamList.paramarray[j][RU_LOCAL_PORTC_IDX].uptr);
+        ru[j]->ifdevice.eth_params.remote_portc       = *(RUParamList.paramarray[j][RU_REMOTE_PORTC_IDX].uptr);
+        ru[j]->ifdevice.eth_params.my_portd           = *(RUParamList.paramarray[j][RU_LOCAL_PORTD_IDX].uptr);
+        ru[j]->ifdevice.eth_params.remote_portd       = *(RUParamList.paramarray[j][RU_REMOTE_PORTD_IDX].uptr);
       
         if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "udp") == 0) {
 	  ru[j]->if_south                     = REMOTE_IF5;
 	  ru[j]->function                     = NGFI_RAU_IF5;
-	  ru[j]->eth_params.transp_preference = ETH_UDP_MODE;
+	  ru[j]->ifdevice.eth_params.transp_preference = ETH_UDP_MODE;
         } else if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "udp_ecpri_if5") == 0) {
 	  ru[j]->if_south                     = REMOTE_IF5;
 	  ru[j]->function                     = NGFI_RAU_IF5;
-	  ru[j]->eth_params.transp_preference = ETH_UDP_IF5_ECPRI_MODE;
+	  ru[j]->ifdevice.eth_params.transp_preference = ETH_UDP_IF5_ECPRI_MODE;
         } else if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "raw") == 0) {
 	  ru[j]->if_south                     = REMOTE_IF5;
 	  ru[j]->function                     = NGFI_RAU_IF5;
-	  ru[j]->eth_params.transp_preference = ETH_RAW_MODE;
+	  ru[j]->ifdevice.eth_params.transp_preference = ETH_RAW_MODE;
         } else if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "udp_if4p5") == 0) {
 	  ru[j]->if_south                     = REMOTE_IF4p5;
 	  ru[j]->function                     = NGFI_RAU_IF4p5;
-  	  ru[j]->eth_params.transp_preference = ETH_UDP_IF4p5_MODE;
+    ru[j]->ifdevice.eth_params.transp_preference = ETH_UDP_IF4p5_MODE;
 	  ru[j]->has_ctrl_prt                 = 1;
         } else if (strcmp(*(RUParamList.paramarray[j][RU_TRANSPORT_PREFERENCE_IDX].strptr), "raw_if4p5") == 0) {
 	  ru[j]->if_south                     = REMOTE_IF4p5;
 	  ru[j]->function                     = NGFI_RAU_IF4p5;
-	  ru[j]->eth_params.transp_preference = ETH_RAW_IF4p5_MODE;
+	  ru[j]->ifdevice.eth_params.transp_preference = ETH_RAW_IF4p5_MODE;
 	  ru[j]->has_ctrl_prt                 = 1;
 	
           if (strcmp(*(RUParamList.paramarray[j][RU_IS_SLAVE_IDX].strptr), "yes") == 0) ru[j]->is_slave=1;

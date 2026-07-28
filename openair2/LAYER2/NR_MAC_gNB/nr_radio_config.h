@@ -72,6 +72,7 @@ void add_sib_to_systeminformation(NR_SystemInformation_IEs_t *si, struct NR_Syst
 NR_SIB19_r17_t *get_SIB19_NR(const NR_ServingCellConfigCommon_t *scc);
 
 NR_CellGroupConfig_t *get_initial_cellGroupConfig(int uid,
+                                                  bool redcap,
                                                   const NR_ServingCellConfigCommon_t *scc,
                                                   const nr_mac_config_t *configuration,
                                                   const nr_rlc_configuration_t *default_rlc_config,

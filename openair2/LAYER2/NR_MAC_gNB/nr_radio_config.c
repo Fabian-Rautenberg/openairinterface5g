@@ -1717,7 +1717,7 @@ static NR_PTRS_DownlinkConfig_t *config_dlptrs(const nr_ptrs_config_t *ptrs)
   return ptrs_config;
 }
 
-static NR_SetupRelease_PDSCH_Config_t *config_pdsch(uint64_t ssb_bitmap, int bwp_Id, bool do_TCI, nr_ptrs_config_t *ptrs)
+static NR_SetupRelease_PDSCH_Config_t *config_pdsch(uint64_t ssb_bitmap, int bwp_Id, const nr_mac_config_t *configuration)
 {
   NR_SetupRelease_PDSCH_Config_t *setup_pdsch_Config = calloc(1,sizeof(*setup_pdsch_Config));
   setup_pdsch_Config->present = NR_SetupRelease_PDSCH_Config_PR_setup;
@@ -1727,8 +1727,8 @@ static NR_SetupRelease_PDSCH_Config_t *config_pdsch(uint64_t ssb_bitmap, int bwp
   pdsch_Config->dmrs_DownlinkForPDSCH_MappingTypeA->present = NR_SetupRelease_DMRS_DownlinkConfig_PR_setup;
   pdsch_Config->dmrs_DownlinkForPDSCH_MappingTypeA->choice.setup = calloc(1, sizeof(*pdsch_Config->dmrs_DownlinkForPDSCH_MappingTypeA->choice.setup));
   NR_DMRS_DownlinkConfig_t *dmrs_DownlinkForPDSCH_MappingTypeA = pdsch_Config->dmrs_DownlinkForPDSCH_MappingTypeA->choice.setup;
-  if (ptrs) {
-    NR_PTRS_DownlinkConfig_t *ptrs_config = config_dlptrs(ptrs);
+  if (configuration->ptrs) {
+    NR_PTRS_DownlinkConfig_t *ptrs_config = config_dlptrs(configuration->ptrs);
     NR_SetupRelease_PTRS_DownlinkConfig_t *phaseTrackingRS = calloc(1, sizeof(*phaseTrackingRS));
     phaseTrackingRS->present = NR_SetupRelease_PTRS_DownlinkConfig_PR_setup;
     phaseTrackingRS->choice.setup = ptrs_config;
@@ -1750,7 +1750,7 @@ static NR_SetupRelease_PDSCH_Config_t *config_pdsch(uint64_t ssb_bitmap, int bwp
   pdsch_Config->prb_BundlingType.choice.staticBundling->bundleSize = calloc(1, sizeof(*pdsch_Config->prb_BundlingType.choice.staticBundling->bundleSize));
   *pdsch_Config->prb_BundlingType.choice.staticBundling->bundleSize = NR_PDSCH_Config__prb_BundlingType__staticBundling__bundleSize_wideband;
 
-  if (do_TCI) {
+  if (configuration->do_TCI) {
     int n_ssb = 0;
     if (!pdsch_Config->tci_StatesToAddModList)
       pdsch_Config->tci_StatesToAddModList=calloc(1,sizeof(*pdsch_Config->tci_StatesToAddModList));
@@ -1866,7 +1866,7 @@ static NR_BWP_Downlink_t *config_downlinkBWP(const NR_ServingCellConfigCommon_t 
   asn1cSeqAdd(&bwp->bwp_Dedicated->pdcch_Config->choice.setup->searchSpacesToAddModList->list, ss3);
 
   bwp->bwp_Dedicated->pdcch_Config->choice.setup->searchSpacesToReleaseList = NULL;
-  bwp->bwp_Dedicated->pdsch_Config = config_pdsch(ssb_bitmap, bwp->bwp_Id, configuration->do_TCI, configuration->ptrs);
+  bwp->bwp_Dedicated->pdsch_Config = config_pdsch(ssb_bitmap, bwp->bwp_Id, configuration);
 
   set_dl_mcs_table(bwp->bwp_Common->genericParameters.subcarrierSpacing,
                    force_256qam_off ? NULL : uecap,
@@ -3430,7 +3430,7 @@ static NR_BWP_DownlinkDedicated_t *configure_initial_dl_bwp(const NR_ServingCell
   asn1cSeqAdd(&pdcch_Config->searchSpacesToAddModList->list, ss2);
   bwp_Dedicated->pdcch_Config->choice.setup = pdcch_Config;
 
-  bwp_Dedicated->pdsch_Config = config_pdsch(bitmap, 0, configuration->do_TCI, configuration->ptrs);
+  bwp_Dedicated->pdsch_Config = config_pdsch(bitmap, 0, configuration);
   // we might call configuration of initial BWP for BWP switch when we already have UE capabilities
   set_dl_mcs_table(scc->uplinkConfigCommon->initialUplinkBWP->genericParameters.subcarrierSpacing,
                    configuration->force_256qam_off ? NULL : uecap,
@@ -3562,6 +3562,7 @@ static NR_CSI_MeasConfig_t *get_csiMeasConfig(const NR_ServingCellConfig_t *conf
 }
 
 static NR_SpCellConfig_t *get_initial_SpCellConfig(int uid,
+                                                   bool redcap,
                                                    const NR_ServingCellConfigCommon_t *scc,
                                                    const nr_mac_config_t *configuration,
                                                    int ssb_index)
@@ -3596,7 +3597,7 @@ static NR_SpCellConfig_t *get_initial_SpCellConfig(int uid,
 
   uint64_t bitmap = get_ssb_bitmap(scc);
   int first_active_bwp = 0;
-  if (configuration->num_additional_bwps > 0)
+  if (!redcap && configuration->num_additional_bwps > 0)
     first_active_bwp = configuration->first_active_bwp > 0 ? 1 : 0;
 
   asn1cCallocOne(configDedicated->firstActiveDownlinkBWP_Id, first_active_bwp);
@@ -3755,7 +3756,10 @@ NR_RLC_BearerConfig_t *get_DRB_RLC_BearerConfig(long lcChannelId,
   return rlc_BearerConfig;
 }
 
-static bool verify_radio_configuration(int uid, const NR_ServingCellConfigCommon_t *scc, const nr_mac_config_t *configuration)
+static bool verify_radio_configuration(int uid,
+                                       bool redcap,
+                                       const NR_ServingCellConfigCommon_t *scc,
+                                       const nr_mac_config_t *configuration)
 {
   frame_structure_t *fs = &RC.nrmac[0]->frame_structure;
   int srs_offset = get_ul_slot_offset(fs, uid, false);
@@ -3765,7 +3769,7 @@ static bool verify_radio_configuration(int uid, const NR_ServingCellConfigCommon
     return false;
   }
 
-  int n_dl_bwp = 1 + configuration->num_additional_bwps; // initial + additional bwps
+  int n_dl_bwp = 1 + (redcap ? 0 : configuration->num_additional_bwps); // initial + additional bwps
   int csi_offset = fs->numb_slots_period * n_dl_bwp;
   // see set_csirs_periodicity
   if (csi_offset / 320 >= get_full_dl_slots_per_period(fs)) {
@@ -3800,15 +3804,16 @@ static bool verify_radio_configuration(int uid, const NR_ServingCellConfigCommon
 }
 
 NR_CellGroupConfig_t *get_initial_cellGroupConfig(int uid,
+                                                  bool redcap,
                                                   const NR_ServingCellConfigCommon_t *scc,
                                                   const nr_mac_config_t *configuration,
                                                   const nr_rlc_configuration_t *default_rlc_config,
                                                   int ssb_index)
 {
-  if (!verify_radio_configuration(uid, scc, configuration))
+  if (!verify_radio_configuration(uid, redcap, scc, configuration))
     return NULL;
 
-  NR_SpCellConfig_t *spCellConfig = get_initial_SpCellConfig(uid, scc, configuration, ssb_index);
+  NR_SpCellConfig_t *spCellConfig = get_initial_SpCellConfig(uid, redcap, scc, configuration, ssb_index);
   NR_CellGroupConfig_t *cellGroupConfig = calloc(1, sizeof(*cellGroupConfig));
   cellGroupConfig->cellGroupId = 0;
 
@@ -4102,7 +4107,7 @@ NR_CellGroupConfig_t *get_default_secondaryCellGroup(const NR_ServingCellConfigC
 
   configDedicated->initialDownlinkBWP = calloc(1, sizeof(*configDedicated->initialDownlinkBWP));
   configDedicated->initialDownlinkBWP->pdcch_Config = NULL;
-  configDedicated->initialDownlinkBWP->pdsch_Config = config_pdsch(bitmap, 0, configuration->do_TCI, configuration->ptrs);
+  configDedicated->initialDownlinkBWP->pdsch_Config = config_pdsch(bitmap, 0, configuration);
   configDedicated->initialDownlinkBWP->sps_Config = NULL; // calloc(1,sizeof(struct NR_SetupRelease_SPS_Config));
 
   configDedicated->initialDownlinkBWP->radioLinkMonitoringConfig = NULL;

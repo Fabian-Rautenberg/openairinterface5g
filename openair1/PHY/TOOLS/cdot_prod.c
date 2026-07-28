@@ -17,7 +17,7 @@
 c32_t dot_product(const c16_t *x, const c16_t *y, const uint32_t N, const int output_shift)
 {
 
-  c32_t ret;
+  c32_t ret = {0, 0};
 
   const c16_t *end = x + N;
 

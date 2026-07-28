@@ -383,6 +383,12 @@ endif()
 add_boolean_option(ENABLE_IMSCOPE OFF "Enable phy scope based on imgui" OFF)
 add_boolean_option(ENABLE_IMSCOPE_RECORD OFF "Enable recording IQ data for imscope" OFF)
 
+#########################
+##### E3 AGENT
+#########################
+set(E3_AGENT "OFF" CACHE STRING "O-RAN nGRG E3 Agent for dApps")
+set_property(CACHE E3_AGENT PROPERTY STRINGS "ON" "OFF")
+
 ##################################################
 # ASN.1 grammar C code generation & dependencies #
 ##################################################
@@ -855,7 +861,6 @@ set(NR_PHY_SRC_RU
   ${OPENAIR1_DIR}/PHY/MODULATION/nr_beamforming.c
   ${OPENAIR1_DIR}/PHY/MODULATION/slot_fep_nr.c
   ${OPENAIR1_DIR}/PHY/INIT/nr_init_ru.c
-  ${OPENAIR1_DIR}/PHY/if4_tools.c
   )
 
 set(PHY_SRC_UE
@@ -1334,13 +1339,6 @@ target_link_libraries(NR_L2_UE PRIVATE nr_rlc)
 target_link_libraries(NR_L2_UE PRIVATE asn1_nr_rrc_hdrs asn1_lte_rrc_hdrs nr_common nr_ue_power_procedures nr_ue_ra_procedures)
 target_link_libraries(NR_L2_UE PRIVATE nr_nas)
 
-add_library(MAC_NR_COMMON
-            ${OPENAIR2_DIR}/LAYER2/NR_MAC_COMMON/nr_mac_common.c
-            ${OPENAIR2_DIR}/LAYER2/NR_MAC_COMMON/nr_mac_common_tdd.c
-            ${OPENAIR2_DIR}/LAYER2/NR_MAC_COMMON/nr_compute_tbs_common.c
-)
-target_link_libraries(MAC_NR_COMMON PRIVATE asn1_nr_rrc_hdrs asn1_lte_rrc_hdrs)
-
 include_directories("${OPENAIR2_DIR}/NR_UE_PHY_INTERFACE")
 include_directories("${OPENAIR2_DIR}/LAYER2")
 include_directories("${OPENAIR1_DIR}/SCHED_NR_UE")
@@ -1769,23 +1767,25 @@ target_link_libraries(lte-uesoftmodem PRIVATE asn1_nr_rrc_hdrs asn1_lte_rrc_hdrs
 # force the generation of ASN.1 so that we don't need to wait during the build
 target_link_libraries(lte-uesoftmodem PRIVATE
                       asn1_lte_rrc asn1_s1ap asn1_m2ap asn1_m3ap asn1_x2ap)
-# nr RRU
-add_executable(nr-oru
-  ${OPENAIR_DIR}/executables/nr-ru.c
-  ${OPENAIR_DIR}/openair1/PHY/INIT/nr_parms.c
-  ${OPENAIR_DIR}/openair1/SCHED_NR/phy_frame_config_nr.c
-  ${OPENAIR_DIR}/openair1/SCHED_NR/nr_prach_procedures.c
-  ${OPENAIR_DIR}/openair1/SCHED_NR/nr_ru_procedures.c
-  ${OPENAIR_DIR}/openair1/SCHED/phy_procedures_lte_common.c
-  ${OPENAIR_DIR}/executables/main_nr_ru.c
-)
-target_link_libraries(nr-oru PRIVATE
-  UTIL NR_PHY_RU PHY_NR shlib_loader dl
-  radio_common softmodem_common nfapi_pnf_lib)
-target_link_libraries(nr-oru PRIVATE pthread m CONFIG_LIB rt ${T_LIB} utils
-  barrier actor nfapi_user_lib)
-target_link_libraries(nr-oru PRIVATE asn1_nr_rrc_hdrs asn1_lte_rrc_hdrs nr_phy_common time_management)
 
+if (OAI_RU_FRONTHAUL)
+  add_executable(nr-oru
+    ${OPENAIR_DIR}/executables/nr-ru.c
+    ${OPENAIR_DIR}/openair1/PHY/INIT/nr_parms.c
+    ${OPENAIR_DIR}/openair1/SCHED_NR/phy_frame_config_nr.c
+    ${OPENAIR_DIR}/openair1/SCHED_NR/nr_prach_procedures.c
+    ${OPENAIR_DIR}/openair1/SCHED_NR/nr_ru_procedures.c
+    ${OPENAIR_DIR}/openair1/SCHED/phy_procedures_lte_common.c
+    ${OPENAIR_DIR}/executables/main_nr_ru.c
+    ${OPENAIR_DIR}/executables/nr-oru.c
+  )
+  target_link_libraries(nr-oru PRIVATE
+    UTIL NR_PHY_RU PHY_NR shlib_loader dl oru_fh MAC_NR_COMMON
+    radio_common softmodem_common nfapi_pnf_lib)
+  target_link_libraries(nr-oru PRIVATE pthread m CONFIG_LIB rt ${T_LIB} utils
+    barrier actor nfapi_user_lib)
+  target_link_libraries(nr-oru PRIVATE asn1_nr_rrc_hdrs asn1_lte_rrc_hdrs nr_phy_common time_management)
+endif()
 # nr-softmodem
 ###################################################
 
@@ -1828,6 +1828,11 @@ endif()
 if(E2_AGENT)
   target_link_libraries(nr-softmodem PUBLIC e2_agent e2_agent_arg e2_ran_func_du_cucp_cuup)
   target_compile_definitions(nr-softmodem PRIVATE ${E2AP_VERSION} ${KPM_VERSION} E2_AGENT)
+endif()
+
+if (E3_AGENT)
+    target_link_libraries(nr-softmodem PRIVATE e3ap)
+    target_compile_definitions(nr-softmodem PRIVATE E3_AGENT)
 endif()
 
 
@@ -2031,6 +2036,19 @@ target_link_libraries(nr_srssim PRIVATE
   m pthread ITTI dl nr_ue_phy_meas physim_common softmodem_common
   )
 
+add_executable(nr_ulsim_mu_mimo
+  ${OPENAIR1_DIR}/SIMULATION/NR_PHY/ulsim_mu_mimo.c
+  ${NFAPI_USER_DIR}/nfapi.c
+  ${NFAPI_USER_DIR}/gnb_ind_vars.c
+  ${PHY_INTERFACE_DIR}/queue_t.c
+  )
+
+target_link_libraries(nr_ulsim_mu_mimo PRIVATE
+  -Wl,--start-group UTIL SIMU PHY_NR_COMMON PHY_NR PHY_NR_UE SCHED_NR_LIB SCHED_NR_UE_LIB MAC_UE_NR MAC_NR_COMMON CONFIG_LIB L2_NR -Wl,--end-group
+  m pthread ${T_LIB} ITTI dl nr_ue_phy_meas physim_common softmodem_common NR_L2_UE
+  )
+target_link_libraries(nr_ulsim_mu_mimo PRIVATE asn1_nr_rrc_hdrs asn1_lte_rrc_hdrs)
+
 if(ENABLE_CHANNEL_SIM_CUDA)
   if (TARGET oai_cuda_lib)
       target_link_libraries(nr_dlsim PRIVATE oai_cuda_lib)
@@ -2088,7 +2106,7 @@ if (${T_TRACER})
         nr-uesoftmodem dlsim dlsim_tm4 dlsim_tm7
         ulsim pbchsim scansim mbmssim pdcchsim pucchsim prachsim
         syncsim nr_ulsim nr_dlsim nr_dlschsim nr_pbchsim nr_pucchsim
-        nr_ulschsim ldpctest polartest smallblocktest nr_srssim
+        nr_ulschsim ldpctest polartest smallblocktest nr_srssim nr_ulsim_mu_mimo
         #all "add_library" definitions
         ITTI lte_rrc nr_rrc s1ap x2ap m2ap m3ap f1ap
         params_libconfig

@@ -259,7 +259,7 @@ void mac_top_init_gNB(ngran_node_t node_type,
   if (RC.nb_nr_macrlc_inst > 0) {
 
     RC.nrmac = (gNB_MAC_INST **) malloc16(RC.nb_nr_macrlc_inst *sizeof(gNB_MAC_INST *));
-    
+
     AssertFatal(RC.nrmac != NULL,"can't ALLOCATE %zu Bytes for %d gNB_MAC_INST with size %zu \n",
                 RC.nb_nr_macrlc_inst * sizeof(gNB_MAC_INST *),
                 RC.nb_nr_macrlc_inst, sizeof(gNB_MAC_INST));
@@ -267,13 +267,13 @@ void mac_top_init_gNB(ngran_node_t node_type,
     for (module_id_t i = 0; i < RC.nb_nr_macrlc_inst; i++) {
 
       RC.nrmac[i] = (gNB_MAC_INST *) malloc16(sizeof(gNB_MAC_INST));
-      
+
       AssertFatal(RC.nrmac != NULL,"can't ALLOCATE %zu Bytes for %d gNB_MAC_INST with size %zu \n",
                   RC.nb_nr_macrlc_inst * sizeof(gNB_MAC_INST *),
                   RC.nb_nr_macrlc_inst, sizeof(gNB_MAC_INST));
-      
+
       LOG_D(MAC,"[MAIN] ALLOCATE %zu Bytes for %d gNB_MAC_INST @ %p\n",sizeof(gNB_MAC_INST), RC.nb_nr_macrlc_inst, RC.mac);
-      
+
       bzero(RC.nrmac[i], sizeof(gNB_MAC_INST));
       nr_mac_pcch_queue_init(&RC.nrmac[i]->common_channels[0]);
 

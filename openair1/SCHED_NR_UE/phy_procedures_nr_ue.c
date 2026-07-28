@@ -50,36 +50,6 @@ static const unsigned int gain_table[31] = {100,  112,  126,  141,  158,  178,  
 
 static void nr_ue_prach_procedures(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, c16_t **txData);
 
-void nr_fill_dl_indication(nr_downlink_indication_t *dl_ind,
-                           fapi_nr_dci_indication_t *dci_ind,
-                           fapi_nr_rx_indication_t *rx_ind,
-                           const UE_nr_rxtx_proc_t *proc,
-                           PHY_VARS_NR_UE *ue,
-                           void *phy_data)
-{
-  memset((void*)dl_ind, 0, sizeof(nr_downlink_indication_t));
-
-  dl_ind->gNB_index = proc->gNB_id;
-  dl_ind->module_id = ue->Mod_id;
-  dl_ind->cc_id     = ue->CC_id;
-  dl_ind->hfn       = proc->hfn_rx;
-  dl_ind->frame     = proc->frame_rx;
-  dl_ind->slot      = proc->nr_slot_rx;
-  dl_ind->phy_data  = phy_data;
-
-  if (dci_ind) {
-
-    dl_ind->rx_ind = NULL; //no data, only dci for now
-    dl_ind->dci_ind = dci_ind;
-
-  } else if (rx_ind) {
-
-    dl_ind->rx_ind = rx_ind; //  hang on rx_ind instance
-    dl_ind->dci_ind = NULL;
-
-  }
-}
-
 static uint32_t get_ssb_arfcn(NR_DL_FRAME_PARMS *frame_parms)
 {
   uint32_t band_size_hz = frame_parms->N_RB_DL * 12 * frame_parms->subcarrier_spacing;
@@ -94,16 +64,13 @@ void nr_fill_rx_indication(fapi_nr_rx_indication_t *rx_ind,
                            int cw_idx,
                            int harq_pid,
                            NR_UE_DLSCH_t *dlsch,
-                           uint16_t n_pdus,
                            const UE_nr_rxtx_proc_t *proc,
-                           void *typeSpecific,
-                           uint8_t *b)
+                           void *typeSpecific)
 {
-  if (n_pdus > 1) {
-    LOG_E(PHY, "Multiple number of DL PDUs not supported yet...\n");
-    return;
-  }
-  fapi_nr_rx_indication_body_t *rx = rx_ind->rx_indication_body + n_pdus - 1;
+  AssertFatal(rx_ind->number_pdus < NFAPI_RX_IND_MAX_PDU - 1, "Exceeded rx_ind array size\n");
+  fapi_nr_rx_indication_body_t *rx = rx_ind->rx_indication_body + rx_ind->number_pdus;
+  rx_ind->number_pdus++;
+  *rx = (fapi_nr_rx_indication_body_t){.pdu_type = pdu_type};
   switch (pdu_type){
     case FAPI_NR_RX_PDU_TYPE_SIB:
     case FAPI_NR_RX_PDU_TYPE_RAR:
@@ -114,7 +81,7 @@ void nr_fill_rx_indication(fapi_nr_rx_indication_t *rx_ind,
         rx->pdsch_pdu.harq_pid = harq_pid;
         rx->pdsch_pdu.cw_idx = cw_idx;
         rx->pdsch_pdu.ack_nack = dl_harq->decodeResult;
-        rx->pdsch_pdu.pdu = b;
+        rx->pdsch_pdu.pdu = (uint8_t *)typeSpecific;
         rx->pdsch_pdu.pdu_length = dlsch->cw_info.TBS / 8;
         if (dl_harq->decodeResult) {
           int t = WS_C_RNTI;
@@ -127,7 +94,7 @@ void nr_fill_rx_indication(fapi_nr_rx_indication_t *rx_ind,
           ws_trace_t tmp = {.nr = true,
                             .direction = DIRECTION_DOWNLINK,
                             .type = ue->frame_parms.frame_type == FDD ? FDD_RADIO : TDD_RADIO,
-                            .pdu_buffer = b,
+                            .pdu_buffer = rx->pdsch_pdu.pdu,
                             .pdu_buffer_size = rx->pdsch_pdu.pdu_length,
                             .ueid = 0,
                             .rntiType = t,
@@ -163,9 +130,6 @@ void nr_fill_rx_indication(fapi_nr_rx_indication_t *rx_ind,
     default:
     break;
   }
-
-  rx->pdu_type = pdu_type;
-  rx_ind->number_pdus = n_pdus;
 }
 
 int get_tx_amp_prach(int power_dBm, int power_max_dBm, int N_RB_UL){
@@ -466,19 +430,22 @@ static int nr_ue_pdsch_procedures(PHY_VARS_NR_UE *ue,
         dlschCfg->dlDmrsSymbPos,
         dlsch->cw_info.Nl);
 
-  const uint32_t pdsch_est_size = ((ue->frame_parms.symbols_per_slot * ue->frame_parms.ofdm_symbol_size + 15) / 16) * 16;
-  fourDimArray_t *toFree = NULL;
-  allocCast2D(pdsch_dl_ch_estimates, int32_t, toFree, ue->frame_parms.nb_antennas_rx * dlsch->cw_info.Nl, pdsch_est_size, false);
+  const int actor_idx = proc->nr_slot_rx % ue->pdsch_num_actors;
+  pdsch_scratch_t *scratch = &ue->pdsch_scratch[actor_idx];
+  const uint32_t pdsch_est_size = scratch->pdsch_est_size;
+  const uint32_t pdsch_buf_size_max = scratch->pdsch_buf_size_max;
+  int32_t (*pdsch_dl_ch_estimates)[pdsch_est_size] = (int32_t (*)[pdsch_est_size])scratch->pdsch_dl_ch_estimates;
+  c16_t (*rxdataF_comp)[NR_MAX_NB_LAYERS][pdsch_buf_size_max] = (c16_t (*)[NR_MAX_NB_LAYERS][pdsch_buf_size_max])scratch->rxdataF_comp;
+  c16_t (*dl_ch_mag)[NR_MAX_NB_LAYERS][pdsch_buf_size_max]    = (c16_t (*)[NR_MAX_NB_LAYERS][pdsch_buf_size_max])scratch->dl_ch_mag;
+  c16_t (*dl_ch_magb)[NR_MAX_NB_LAYERS][pdsch_buf_size_max]   = (c16_t (*)[NR_MAX_NB_LAYERS][pdsch_buf_size_max])scratch->dl_ch_magb;
+  c16_t (*dl_ch_magr)[NR_MAX_NB_LAYERS][pdsch_buf_size_max]   = (c16_t (*)[NR_MAX_NB_LAYERS][pdsch_buf_size_max])scratch->dl_ch_magr;
+  c16_t (*rho_dl)[NR_MAX_NB_LAYERS * NR_MAX_NB_LAYERS][pdsch_buf_size_max] = (c16_t (*)[NR_MAX_NB_LAYERS * NR_MAX_NB_LAYERS][pdsch_buf_size_max])scratch->rho_dl;
 
   c16_t ptrs_phase_per_slot[ue->frame_parms.nb_antennas_rx][NR_SYMBOLS_PER_SLOT];
   memset(ptrs_phase_per_slot, 0, sizeof(ptrs_phase_per_slot));
 
   int32_t ptrs_re_per_slot[ue->frame_parms.nb_antennas_rx][NR_SYMBOLS_PER_SLOT];
   memset(ptrs_re_per_slot, 0, sizeof(ptrs_re_per_slot));
-
-  const uint32_t rx_size_symbol = (freq_alloc->num_rbs * NR_NB_SC_PER_RB + 15) & ~15;
-  fourDimArray_t *toFree2 = NULL;
-  allocCast3D(rxdataF_comp, c16_t, toFree2, ue->frame_parms.symbols_per_slot, dlsch->cw_info.Nl, rx_size_symbol, false);
 
   uint32_t nvar = 0;
 
@@ -561,19 +528,6 @@ static int nr_ue_pdsch_procedures(PHY_VARS_NR_UE *ue,
                                                          freq_alloc->num_rbs * NR_NB_SC_PER_RB * dlschCfg->number_symbols,
                                                          &mt);
   }
-  fourDimArray_t *toFree3 = NULL;
-  allocCast3D(dl_ch_mag, c16_t, toFree3, NR_SYMBOLS_PER_SLOT, dlsch->cw_info.Nl, rx_size_symbol, false);
-  fourDimArray_t *toFree4 = NULL;
-  allocCast3D(dl_ch_magb, c16_t, toFree4, NR_SYMBOLS_PER_SLOT, dlsch->cw_info.Nl, rx_size_symbol, false);
-  fourDimArray_t *toFree5 = NULL;
-  allocCast3D(dl_ch_magr, c16_t, toFree5, NR_SYMBOLS_PER_SLOT, dlsch->cw_info.Nl, rx_size_symbol, false);
-  fourDimArray_t *toFreeRho = NULL;
-  const bool need_rho = ue->do_ml && dlsch->cw_info.Nl == 2 && dlsch->cw_info.qamModOrder <= 6;
-  c16_t(*rho_dl)[dlsch->cw_info.Nl * dlsch->cw_info.Nl][rx_size_symbol] = NULL;
-  if (need_rho) {
-    allocCast3D(rho_dl_buf, c16_t, toFreeRho, NR_SYMBOLS_PER_SLOT, dlsch->cw_info.Nl * dlsch->cw_info.Nl, rx_size_symbol, false);
-    rho_dl = rho_dl_buf;
-  }
 
   for (int m = dlschCfg->start_symbol; m < (dlschCfg->number_symbols + dlschCfg->start_symbol); m++) {
     bool first_symbol_flag = false;
@@ -597,7 +551,7 @@ static int nr_ue_pdsch_procedures(PHY_VARS_NR_UE *ue,
                     dl_valid_re,
                     rxdataF,
                     &log2_maxh,
-                    rx_size_symbol,
+                    pdsch_buf_size_max,
                     ue->frame_parms.nb_antennas_rx,
                     rxdataF_comp,
                     dl_ch_mag,
@@ -625,16 +579,10 @@ static int nr_ue_pdsch_procedures(PHY_VARS_NR_UE *ue,
   if (scope_req.copy_rxdataF_to_scope) {
     UEunlockScopeData(ue, pdschRxdataF);
   }
-  free(toFree);
-  free(toFree2);
-  free(toFree3);
-  free(toFree4);
-  free(toFree5);
-  free(toFreeRho);
   return 0;
 }
 
-static uint32_t compute_csi_rm_unav_res(fapi_nr_dl_config_dlsch_pdu_rel15_t *dlsch_config)
+static uint32_t compute_csi_rm_unav_res(fapi_nr_dl_config_dlsch_pdu_rel15_t *dlsch_config, freq_alloc_bitmap_t *freq_alloc)
 {
   uint32_t unav_res = 0;
   for (int i = 0; i < dlsch_config->numCsiRsForRateMatching; i++) {
@@ -663,15 +611,17 @@ static uint32_t compute_csi_rm_unav_res(fapi_nr_dl_config_dlsch_pdu_rel15_t *dls
     // check number overlapping prbs
     // assuming CSI is spanning the whole BW
     AssertFatal(dlsch_config->BWPSize <= csi_pdu->nr_of_rbs, "Assuming CSI-RS is spanning the whold BWP this shouldn't happen\n");
-    int dlsch_start = dlsch_config->start_rb + dlsch_config->BWPStart;
-    int num_overlapping_prbs = dlsch_config->number_rbs;
-    if (num_overlapping_prbs < 1)
-      continue; // no overlapping prbs
-    if (csi_pdu->freq_density < 2) { // 0.5 density
-      num_overlapping_prbs /= 2;
-      // odd number of prbs and the start PRB is even/odd when CSI is in even/odd PRBs
-      if ((num_overlapping_prbs % 2) && ((dlsch_start % 2) == csi_pdu->freq_density))
-        num_overlapping_prbs += 1;
+    int num_overlapping_prbs = 0;
+    for (int rb = freq_alloc->first_rb; rb <= freq_alloc->last_rb; rb++) {
+      if (!check_rb_in_bitmap(freq_alloc, rb))
+        continue;
+      if (csi_pdu->freq_density < 2) {
+        int abs_rb = rb + dlsch_config->BWPStart;
+        if ((abs_rb % 2) == csi_pdu->freq_density)
+          num_overlapping_prbs++;
+      } else {
+        num_overlapping_prbs++;
+      }
     }
     // density is number or res per port per rb (over all symbols)
     int ports [18] = {1, 1, 2, 4, 4, 8, 8, 8, 12, 12, 16, 16, 24, 24, 24, 32, 32, 32};
@@ -701,9 +651,6 @@ static void nr_ue_dlsch_procedures(PHY_VARS_NR_UE *ue,
   int harq_pid = config->harq_process_nbr;
   int frame_rx = proc->frame_rx;
   int nr_slot_rx = proc->nr_slot_rx;
-  nr_downlink_indication_t dl_indication;
-  fapi_nr_rx_indication_t rx_ind = {0};
-  uint16_t number_pdus = 1;
 
   LOG_D(PHY, "AbsSubframe %d.%d Start LDPC Decoder for CW%d [harq_pid %d]\n", frame_rx % 1024, nr_slot_rx, cw_idx, harq_pid);
 
@@ -747,9 +694,6 @@ static void nr_ue_dlsch_procedures(PHY_VARS_NR_UE *ue,
       break;
   }
 
-  nr_fill_dl_indication(&dl_indication, NULL, &rx_ind, proc, ue, NULL);
-  nr_fill_rx_indication(&rx_ind, ind_type, ue, cw_idx, harq_pid, dlsch, number_pdus, proc, NULL, dl_harq->b);
-
   LOG_D(PHY, "DL PDU length in bits: %d, in bytes: %d \n", dlsch->cw_info.TBS, dlsch->cw_info.TBS / 8);
   if (cpumeas(CPUMEAS_GETSTATE)) {
     LOG_D(PHY,
@@ -764,6 +708,18 @@ static void nr_ue_dlsch_procedures(PHY_VARS_NR_UE *ue,
 
   // send to mac
   if (ue->if_inst && ue->if_inst->dl_indication) {
+    fapi_nr_rx_indication_t rx_ind;
+    rx_ind.number_pdus = 0;
+    nr_fill_rx_indication(&rx_ind, ind_type, ue, cw_idx, harq_pid, dlsch, proc, dl_harq->b);
+    nr_downlink_indication_t dl_indication = (nr_downlink_indication_t){
+        .gNB_index = proc->gNB_id,
+        .module_id = ue->Mod_id,
+        .cc_id = ue->CC_id,
+        .hfn = proc->hfn_rx,
+        .frame = proc->frame_rx,
+        .slot = proc->nr_slot_rx,
+        .rx_ind = &rx_ind,
+    };
     ue->if_inst->dl_indication(&dl_indication);
   }
 
@@ -886,18 +842,22 @@ void pdcch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_
     memcpy(ue->phy_sim_rxdataF, rxdataF[0], sizeof(int32_t) * max_nb_symb_pdcch * fp->ofdm_symbol_size);
 }
 
-int is_ssb_in_symbol(const PHY_VARS_NR_UE *ue, const int symbIdxInFrame, const int slot, const int ssbMask, const int ssbIndex)
+int is_ssb_in_symbol(const PHY_VARS_NR_UE *ue,
+                     const int symbIdxInFrame,
+                     const int slot,
+                     const int ssbMask,
+                     const int ssbIndex,
+                     const int ssb_period)
 {
   const NR_DL_FRAME_PARMS *fp = &ue->frame_parms;
-  const fapi_nr_config_request_t *cfg = &ue->nrUE_config;
   // Skip if current SSB index is not transmitted
   if (!is_ssb_index_transmitted(ue, ssbIndex)) {
     return false;
   }
 
   const int startPbchSymb = nr_get_ssb_start_symbol(fp, ssbIndex) + 1;
-  const int startPbchSymbHf = (cfg->ssb_table.ssb_period == 0) ? (startPbchSymb + (fp->slots_per_frame * NR_SYMBOLS_PER_SLOT / 2))
-                                                               : (fp->slots_per_frame * NR_SYMBOLS_PER_SLOT);
+  const int startPbchSymbHf = (ssb_period == 0) ? (startPbchSymb + (fp->slots_per_frame * NR_SYMBOLS_PER_SLOT / 2))
+                                                : (fp->slots_per_frame * NR_SYMBOLS_PER_SLOT);
 
   // Skip if no SSB in current symbol
   if ((symbIdxInFrame >= startPbchSymb && symbIdxInFrame < (startPbchSymb + NB_SYMBOLS_PBCH))
@@ -922,7 +882,7 @@ int get_ssb_index_in_symbol(const PHY_VARS_NR_UE *ue, const int symbIdxInFrame, 
   // Find the SSB index corresponding to current symbol
   for (int ssbIndex = 0; ssbIndex < fp->Lmax; ssbIndex++) {
     const int ssbMask = cfg->ssb_table.ssb_mask_list[ssbIndex / 32].ssb_mask;
-    if (is_ssb_in_symbol(ue, symbIdxInFrame, slot, ssbMask, ssbIndex))
+    if (is_ssb_in_symbol(ue, symbIdxInFrame, slot, ssbMask, ssbIndex, ssb_period))
       return ssbIndex;
   }
 
@@ -1178,19 +1138,39 @@ void pdsch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_
   }
 
   // do procedures for CSI-RS
-  if (phy_data->csirs_vars.active == 1) {
-    for(int symb = 0; symb < ue->frame_parms.symbols_per_slot; symb++) {
-      if(is_csi_rs_in_symbol(phy_data->csirs_vars.csirs_config_pdu, symb)) {
-        if (!slot_fep_map[symb]) {
-          nr_slot_fep(ue, &ue->frame_parms, proc->nr_slot_rx, symb, rxdataF, link_type_dl, 0, ue->common_vars.rxdata);
-          slot_fep_map[symb] = true;
+  {
+    /*
+    CSI-RS for tracking use only one port.
+    Number of CSI-RS resources for tracking is always 2 per slot.
+    Computed estimates from first resource is saved and used while estimating second resource.
+    */
+    c16_t trs_estimates[ue->frame_parms.nb_antennas_rx][1][ue->frame_parms.ofdm_symbol_size];
+    for (int res = 0; res < MAX_CSI_RES_SLOT; res++) {
+      if (phy_data->csirs_vars[res].active == 1) {
+        for (int symb = 0; symb < ue->frame_parms.symbols_per_slot; symb++) {
+          if (is_csi_rs_in_symbol(phy_data->csirs_vars[res].csirs_config_pdu, symb)) {
+            if (!slot_fep_map[symb]) {
+              nr_slot_fep(ue, &ue->frame_parms, proc->nr_slot_rx, symb, rxdataF, link_type_dl, 0, ue->common_vars.rxdata);
+              slot_fep_map[symb] = true;
+            }
+          }
         }
+        if (res > 0 && phy_data->csirs_vars[res].csirs_config_pdu.csi_type == 0) // tracking CSI
+          AssertFatal(phy_data->csirs_vars[res - 1].active && (phy_data->csirs_vars[res - 1].csirs_config_pdu.csi_type == 0),
+                      "CSI-RS for tracking must have two consecutive active resources\n");
+        nr_ue_csi_rs_procedures(ue,
+                                proc,
+                                rxdataF,
+                                &phy_data->csirs_vars[res].csirs_config_pdu,
+                                trs_estimates,
+                                res,
+                                (res == 1) ? phy_data->csirs_vars[0].csirs_config_pdu.symb_l0 : -1);
       }
     }
-    nr_ue_csi_rs_procedures(ue, proc, rxdataF, &phy_data->csirs_vars.csirs_config_pdu);
   }
 
-  int16_t *llr[2];
+  const int actor_idx_llr = proc->nr_slot_rx % ue->pdsch_num_actors;
+  int16_t **llr = ue->pdsch_scratch[actor_idx_llr].llr;
   fapi_nr_dl_config_dlsch_pdu_rel15_t *dlsch_config = &phy_data->dlsch_config;
   for (int c = 0; c < phy_data->n_dlsch_codewords; c++) {
     NR_UE_DLSCH_t *dlsch = &phy_data->dlsch[c];
@@ -1230,7 +1210,7 @@ void pdsch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_
       int ptrsSymbPerSlot = get_ptrs_symbols_in_slot(ptrsSymbPos, dlsch_config->start_symbol, dlsch_config->number_symbols);
       unav_res = n_ptrs * ptrsSymbPerSlot;
     }
-    unav_res += compute_csi_rm_unav_res(dlsch_config);
+    unav_res += compute_csi_rm_unav_res(dlsch_config, &freq_alloc);
     int G = nr_get_G(freq_alloc.num_rbs,
                      dlsch_config->number_symbols,
                      nb_re_dmrs,
@@ -1239,7 +1219,6 @@ void pdsch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_
                      dlsch->cw_info.qamModOrder,
                      dlsch->cw_info.Nl);
     const uint32_t rx_llr_buf_sz = ALIGNARRAYSIZE(G, 32); // each LLR is 2 bytes hence 64 byte aligned
-    llr[c] = (int16_t *)malloc16_clear(rx_llr_buf_sz * sizeof(int16_t));
 
     // dlsch_harq contains the previous transmissions data for this harq pid
     NR_DL_UE_HARQ_t *harq = &ue->dl_harq_processes[c][dlsch_config->harq_process_nbr];
@@ -1276,7 +1255,6 @@ void pdsch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_
     if (ue->phy_sim_pdsch_llr)
       memcpy(ue->phy_sim_pdsch_llr, llr[c], sizeof(int16_t) * rx_llr_buf_sz);
 
-    free(llr[c]);
   }
 
   if (nr_slot_rx==9) {

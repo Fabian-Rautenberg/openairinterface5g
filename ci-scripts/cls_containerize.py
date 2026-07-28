@@ -301,7 +301,7 @@ class Containerize():
 			elif image != 'ran-build':
 				cmd.run(f'sed -i -e "s#ran-build:latest#ran-build:{imageTag}#" docker/Dockerfile.{pattern}{dockerfileprefix}')
 			if image == 'oai-gnb-aerial':
-				cmd.run('cp -f /opt/nvidia-ipc/nvipc_src.2026.01.07.tar.gz .')
+				cmd.run('cp -f /opt/nvidia-ipc/nvipc_src.2026.03.04.tar.gz .')
 			if image == 'ran-build-fhi72-t2':
 				cmd.run('cp -f /opt/t2-patch/AMD-T2-SDFEC_25-03-1.patch .')
 			if name == 'oai-gnb-fhi72-t2':
@@ -675,5 +675,5 @@ class Containerize():
 
 		logging.info(f"check against thresholds from {thresholds}")
 		success, datalog_rt_stats = cls_analysis.Analysis.analyze_rt_stats(thresholds, local_files)
-		HTML.CreateHtmlDataLogTable(datalog_rt_stats)
+		HTML.CreateHtmlDataLogTable(datalog_rt_stats, thresholds)
 		return success

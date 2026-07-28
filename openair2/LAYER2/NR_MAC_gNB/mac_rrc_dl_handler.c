@@ -265,8 +265,8 @@ static int get_non_dynamic_priority(int fiveqi)
   for (int i = 0; i < sizeofArray(qos_fiveqi); ++i)
     if (qos_fiveqi[i] == fiveqi)
       return qos_priority[i];
-  AssertFatal(false, "illegal 5QI value %d\n", fiveqi);
-  return 0;
+  LOG_W(NR_MAC, "unsupported non-dynamic 5QI %d\n", fiveqi);
+  return -1;
 }
 
 static NR_QoS_config_t get_qos_config(const f1ap_qos_flow_param_t *qos)
@@ -319,6 +319,8 @@ static int handle_ue_context_drbs_setup(NR_UE_info_t *UE,
     int prio = 100;
     for (int q = 0; q < drb->nr.flows_len; ++q) {
       c.qos_config[q] = get_qos_config(&drb->nr.flows[q].param);
+      if (c.qos_config[q].priority < 0)
+        continue;
       prio = min(prio, c.qos_config[q].priority);
     }
     c.priority = prio;
@@ -544,7 +546,7 @@ static NR_UE_info_t *create_new_UE(gNB_MAC_INST *mac, uint32_t cu_id, const NR_C
   const nr_mac_config_t *configuration = &mac->radio_config;
   int ssb_index = get_ssbidx_from_beam(mac, UE->UE_beam_index);
   if (is_SA) {
-    cellGroupConfig = get_initial_cellGroupConfig(UE->uid, scc, &mac->radio_config, &mac->rlc_config, ssb_index);
+    cellGroupConfig = get_initial_cellGroupConfig(UE->uid, UE->is_redcap, scc, &mac->radio_config, &mac->rlc_config, ssb_index);
     cellGroupConfig->spCellConfig->reconfigurationWithSync = get_reconfiguration_with_sync(UE->rnti, UE->uid, scc, mac->frame);
   } else {
     NR_UE_NR_Capability_t *cap = get_ue_nr_cap_from_cg_config_info(cgci);
