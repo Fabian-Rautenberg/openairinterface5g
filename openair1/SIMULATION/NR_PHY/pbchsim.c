@@ -665,6 +665,7 @@ int main(int argc, char **argv)
         proc.nr_slot_rx = ssb_slot;
         proc.gNB_id = 0;
         int16_t pbch_e_rx[NR_POLAR_PBCH_E];
+        uint8_t log2_maxh = 0;
         for (int i = UE->symbol_offset + 1; i < UE->symbol_offset + 4; i++) {
           nr_slot_fep(UE,
                       frame_parms,
@@ -702,7 +703,8 @@ int main(int argc, char **argv)
                                frame_parms->ssb_start_subcarrier,
                                rxdataF_symb,
                                dl_ch_estimates,
-                               pbch_e_rx);
+                               pbch_e_rx,
+                               &log2_maxh);
         }
         fapiPbch_t result;
         int ret_ssb_idx;

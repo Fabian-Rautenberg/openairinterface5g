@@ -643,7 +643,7 @@ pipeline {
           }
         }
         stage ("gNB-N300-Timing-Phytest-LDPC") {
-          when { expression {do5Gtest} }
+          when { expression {do5Gtest || do5GUeTest} }
           steps {
             script {
               triggerDownstreamJob ('RAN-gNB-N300-Timing-Phytest-LDPC')

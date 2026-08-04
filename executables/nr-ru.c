@@ -292,7 +292,7 @@ static radio_tx_gpio_flag_t get_gpio_flags(RU_t *ru, int slot)
   return flags_gpio;
 }
 
-void tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_symbol, int num_symbols)
+int tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_symbol, int num_symbols)
 {
   RU_proc_t *proc = &ru->proc;
   NR_DL_FRAME_PARMS *fp = ru->nr_frame_parms;
@@ -308,6 +308,7 @@ void tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_
   int siglen = get_samples_per_slot(slot, fp);
   radio_tx_burst_flag_t flags_burst = TX_BURST_INVALID;
   radio_tx_gpio_flag_t flags_gpio = 0;
+  int transmitted_symbols = num_symbols;
 
   if (cfg->cell_config.frame_duplex_type.value == TDD && !get_softmodem_params()->continuous_tx && !IS_SOFTMODEM_RFSIM) {
     int slot_type = nr_slot_select(cfg,frame,slot%fp->slots_per_frame);
@@ -323,7 +324,7 @@ void tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_
 
       if (txsymb < start_symbol) {
         // No DL symbols in this transmission
-        return;
+        return 0;
       }
 
       int end_symbol = start_symbol + num_symbols - 1;
@@ -334,6 +335,7 @@ void tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_
       }
 
       int num_symbols_this_transmission = min(txsymb, end_symbol) - start_symbol + 1;
+      transmitted_symbols = num_symbols_this_transmission;
 
       siglen = get_samples_symbol_duration(fp, slot, start_symbol, num_symbols_this_transmission);
     } else if (slot_type == NR_DOWNLINK_SLOT) {
@@ -348,6 +350,9 @@ void tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_
         flags_burst = proc->first_tx == 1 ? TX_BURST_START : TX_BURST_MIDDLE;
       }
       siglen = get_samples_symbol_duration(fp, slot, start_symbol, num_symbols);
+    } else if (slot_type == NR_UPLINK_SLOT) {
+      // Do not transmit during uplink slots
+      return 0;
     }
   } else { // FDD
     flags_burst = proc->first_tx == 1 ? TX_BURST_START : TX_BURST_MIDDLE;
@@ -386,6 +391,8 @@ void tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_
         siglen + sf_extension,
         txs,
         10 * log10((double)signal_energy(txp[0], siglen + sf_extension)));
+
+  return transmitted_symbols;
 }
 
 void tx_rf(RU_t *ru, int frame, int slot, uint64_t timestamp)

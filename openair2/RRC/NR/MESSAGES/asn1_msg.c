@@ -961,12 +961,9 @@ int do_nrMeasurementReport_SA(long trigger_to_measid,
   return ((enc_rval.encoded + 7) / 8);
 }
 
-int do_NR_DLInformationTransfer(uint8_t *buffer,
-                                size_t buffer_len,
-                                uint8_t transaction_id,
-                                uint32_t pdu_length,
-                                uint8_t *pdu_buffer)
+byte_array_t do_NR_DLInformationTransfer(uint8_t transaction_id, uint32_t pdu_length, uint8_t *pdu_buffer)
 {
+  byte_array_t msg = {0};
   NR_DL_DCCH_Message_t dl_dcch_msg = {0};
   dl_dcch_msg.message.present = NR_DL_DCCH_MessageType_PR_c1;
   asn1cCalloc(dl_dcch_msg.message.choice.c1, c1);
@@ -977,18 +974,20 @@ int do_NR_DLInformationTransfer(uint8_t *buffer,
   infoTransfer->criticalExtensions.present = NR_DLInformationTransfer__criticalExtensions_PR_dlInformationTransfer;
 
   asn1cCalloc(infoTransfer->criticalExtensions.choice.dlInformationTransfer, dlInfoTransfer);
-  asn1cCalloc(dlInfoTransfer->dedicatedNAS_Message, msg);
-  // we will free the caller buffer, that is ok in the present code logic (else it will leak memory) but not natural,
-  // comprehensive code design
-  msg->buf = pdu_buffer;
-  msg->size = pdu_length;
+  asn1cCalloc(dlInfoTransfer->dedicatedNAS_Message, nas);
+  /* Takes ownership of pdu_buffer, freed below via ASN_STRUCT_FREE_CONTENTS_ONLY */
+  nas->buf = pdu_buffer;
+  nas->size = pdu_length;
 
-  asn_enc_rval_t r = uper_encode_to_buffer(&asn_DEF_NR_DL_DCCH_Message, NULL, (void *)&dl_dcch_msg, buffer, buffer_len);
-  AssertFatal(r.encoded > 0, "ASN1 message encoding failed (%s, %ld)!\n", "DLInformationTransfer", r.encoded);
+  int val = uper_encode_to_new_buffer(&asn_DEF_NR_DL_DCCH_Message, NULL, &dl_dcch_msg, (void **)&msg.buf);
   ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_NR_DL_DCCH_Message, &dl_dcch_msg);
-  LOG_D(NR_RRC, "DLInformationTransfer Encoded %zd bytes\n", r.encoded);
-  // for (int i=0;i<encoded;i++) printf("%02x ",(*buffer)[i]);
-  return (r.encoded + 7) / 8;
+  if (val <= 0) {
+    LOG_E(NR_RRC, "ASN1 message encoding failed (DLInformationTransfer, %d)!\n", val);
+    return msg;
+  }
+  msg.len = val;
+  LOG_D(NR_RRC, "DLInformationTransfer Encoded %ld bytes\n", msg.len);
+  return msg;
 }
 
 int do_NR_ULInformationTransfer(uint8_t **buffer, uint32_t pdu_length, uint8_t *pdu_buffer)

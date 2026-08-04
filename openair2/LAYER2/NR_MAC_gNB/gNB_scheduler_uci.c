@@ -81,7 +81,9 @@ static void nr_fill_nfapi_pucch(gNB_MAC_INST *nrmac, frame_t frame, slot_t slot,
                      pucch->sr_flag,
                      pucch->r_pucch,
                      nrmac->beam_info.beam_mode,
-                     ant_ports_to_use);
+                     ant_ports_to_use,
+                     nrmac->radio_config.spatial_stream_index,
+                     nrmac->radio_config.pusch_AntennaPorts);
 }
 
 //Differential RSRP values Table 10.1.6.1-2 from 38.133

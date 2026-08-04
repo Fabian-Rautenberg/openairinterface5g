@@ -77,6 +77,7 @@ static bool nr_pbch_detection(const UE_nr_rxtx_proc_t *proc,
     // computing channel estimation for selected best ssb
     int16_t pbch_e_rx[NR_POLAR_PBCH_E];
 
+    uint8_t log2_maxh = 0;
     for (int i = pbch_initial_symbol; i < pbch_initial_symbol + 3; i++) {
       __attribute__((aligned(32))) c16_t dl_ch_estimates[nb_ant][estimateSz];
       for (int aarx = 0; aarx < nb_ant; aarx++) {
@@ -106,7 +107,8 @@ static bool nr_pbch_detection(const UE_nr_rxtx_proc_t *proc,
                            ssb_start_subcarrier,
                            rxdataF[i],
                            dl_ch_estimates,
-                           pbch_e_rx);
+                           pbch_e_rx,
+                           &log2_maxh);
     }
 
     if (0

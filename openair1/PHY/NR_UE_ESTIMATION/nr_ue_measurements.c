@@ -30,13 +30,14 @@
 void nr_ue_measurements(PHY_VARS_NR_UE *ue,
                         const UE_nr_rxtx_proc_t *proc,
                         int number_rbs,
+                        uint16_t l,
                         uint32_t pdsch_est_size,
                         int32_t dl_ch_estimates[][pdsch_est_size])
 {
   int slot = proc->nr_slot_rx;
   int aarx, aatx, gNB_id = 0;
   NR_DL_FRAME_PARMS *frame_parms = &ue->frame_parms;
-  int ch_offset = frame_parms->ofdm_symbol_size*2;
+  int ch_offset = frame_parms->ofdm_symbol_size * l;
   ue->measurements.nb_antennas_rx = frame_parms->nb_antennas_rx;
 
   allocCast3D(rx_spatial_power,

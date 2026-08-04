@@ -6,6 +6,7 @@
  * \brief primitives used by gNB for BCH, RACH, ULSCH, DLSCH scheduling
  */
 
+#include "nfapi_nr_interface_scf.h"
 #include <softmodem-common.h>
 #include "assertions.h"
 
@@ -1501,7 +1502,9 @@ void nr_configure_pucch(nfapi_nr_pucch_pdu_t *pucch_pdu,
                         uint8_t O_sr,
                         int r_pucch,
                         nr_beam_mode_t beam_mode,
-                        uint16_t ant_port_idx)
+                        uint16_t ant_port_start,
+                        uint16_t *ssi,
+                        uint16_t num_ant)
 {
   NR_PUCCH_Resource_t *pucchres;
   NR_PUCCH_FormatConfig_t *pucchfmt;
@@ -1713,8 +1716,9 @@ void nr_configure_pucch(nfapi_nr_pucch_pdu_t *pucch_pdu,
   pucch_pdu->beamforming.dig_bf_interface = 1;
   const uint16_t fapi_beam = convert_to_fapi_beam(UE->UE_beam_index, beam_mode);
   pucch_pdu->beamforming.prgs_list[0].dig_bf_interface_list[0].beam_idx = fapi_beam;
-  pucch_pdu->param_v4.numSpatialStreamIndices = 1;
-  pucch_pdu->param_v4.spatialStreamIndices[0] = ant_port_idx;
+  pucch_pdu->param_v4.numSpatialStreamIndices = num_ant;
+  for (int i = 0; i < num_ant; i++)
+    pucch_pdu->param_v4.spatialStreamIndices[i] = ssi[ant_port_start + i];
 }
 
 void set_r_pucch_parms(int rsetindex,

@@ -320,7 +320,8 @@ void nr_generate_pbch_llr(const PHY_VARS_NR_UE *ue,
                           const int ssb_start_subcarrier,
                           const c16_t rxdataF[frame_parms->nb_antennas_rx][frame_parms->ofdm_symbol_size],
                           const c16_t dl_ch_estimates[frame_parms->nb_antennas_rx][frame_parms->ofdm_symbol_size],
-                          int16_t pbch_e_rx[NR_POLAR_PBCH_E]);
+                          int16_t pbch_e_rx[NR_POLAR_PBCH_E],
+                          uint8_t *log2_maxh);
 int nr_pbch_decode(PHY_VARS_NR_UE *ue,
                    const NR_DL_FRAME_PARMS *frame_parms,
                    const UE_nr_rxtx_proc_t *proc,

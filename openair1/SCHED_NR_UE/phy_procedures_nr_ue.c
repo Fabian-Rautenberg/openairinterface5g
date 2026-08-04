@@ -356,40 +356,36 @@ static void nr_ue_measurement_procedures(uint16_t l,
                                          uint32_t pdsch_est_size,
                                          int32_t dl_ch_estimates[][pdsch_est_size])
 {
-  NR_DL_FRAME_PARMS *frame_parms=&ue->frame_parms;
   int nr_slot_rx = proc->nr_slot_rx;
   int gNB_id = proc->gNB_id;
 
-  if (l == 2) {
-    LOG_D(PHY,"Doing UE measurement procedures in symbol l %u Ncp %d nr_slot_rx %d, rxdata %p\n",
-          l,
-          ue->frame_parms.Ncp,
-          nr_slot_rx,
-          ue->common_vars.rxdata);
-    nr_ue_measurements(ue, proc, number_rbs, pdsch_est_size, dl_ch_estimates);
+  LOG_D(PHY,
+        "Doing UE measurement procedures in symbol l %u Ncp %d nr_slot_rx %d, rxdata %p\n",
+        l,
+        ue->frame_parms.Ncp,
+        nr_slot_rx,
+        ue->common_vars.rxdata);
+  nr_ue_measurements(ue, proc, number_rbs, l, pdsch_est_size, dl_ch_estimates);
 #if T_TRACER
-    if(nr_slot_rx == 0)
-      T(T_UE_PHY_MEAS,
-        T_INT(gNB_id),
-        T_INT(proc->frame_rx % 1024),
-        T_INT(nr_slot_rx),
-        T_INT((int)(10 * log10(ue->measurements.rsrp[0]) - ue->rx_total_gain_dB)),
-        T_INT((int)ue->measurements.rx_rssi_dBm[0]),
-        T_INT((int)(ue->measurements.rx_power_avg_dB[0] - ue->measurements.n0_power_avg_dB)),
-        T_INT((int)ue->measurements.rx_power_avg_dB[0]),
-        T_INT((int)ue->measurements.n0_power_avg_dB),
-        T_INT((int)ue->measurements.wideband_cqi_avg[0]),
-        T_INT((int)ue->common_vars.freq_offset));
+  if (nr_slot_rx == 0)
+    T(T_UE_PHY_MEAS,
+      T_INT(gNB_id),
+      T_INT(proc->frame_rx % 1024),
+      T_INT(nr_slot_rx),
+      T_INT((int)(10 * log10(ue->measurements.rsrp[0]) - ue->rx_total_gain_dB)),
+      T_INT((int)ue->measurements.rx_rssi_dBm[0]),
+      T_INT((int)(ue->measurements.rx_power_avg_dB[0] - ue->measurements.n0_power_avg_dB)),
+      T_INT((int)ue->measurements.rx_power_avg_dB[0]),
+      T_INT((int)ue->measurements.n0_power_avg_dB),
+      T_INT((int)ue->measurements.wideband_cqi_avg[0]),
+      T_INT((int)ue->common_vars.freq_offset));
 #endif
-  }
 
   // accumulate and filter timing offset estimation every subframe (instead of every frame)
-  if (( nr_slot_rx == 2) && (l==(2-frame_parms->Ncp))) {
-
+  if (nr_slot_rx == 2) {
     // AGC
     //printf("start adjust gain power avg db %d\n", ue->measurements.rx_power_avg_dB[gNB_id]);
     phy_adjust_gain_nr (ue,ue->measurements.rx_power_avg_dB[gNB_id],gNB_id);
-    
   }
 }
 
@@ -482,7 +478,9 @@ static int nr_ue_pdsch_procedures(PHY_VARS_NR_UE *ue,
   }
   stop_meas_nr_ue_phy(ue, DLSCH_CHANNEL_ESTIMATION_STATS);
   nvar /= (dlschCfg->number_symbols * dlsch->cw_info.Nl * ue->frame_parms.nb_antennas_rx);
-  nr_ue_measurement_procedures(2, ue, proc, freq_alloc->num_rbs, pdsch_est_size, pdsch_dl_ch_estimates);
+  uint32_t dmrs_mask = dlschCfg->dlDmrsSymbPos;
+  int first_dmrs_symbol = get_first_bit_index_mask(&dmrs_mask, 1, 0, NR_SYMBOLS_PER_SLOT);
+  nr_ue_measurement_procedures(first_dmrs_symbol, ue, proc, freq_alloc->num_rbs, pdsch_est_size, pdsch_dl_ch_estimates);
 
   if (ue->chest_time == 1) { // averaging time domain channel estimates
     nr_chest_time_domain_avg(&ue->frame_parms,
@@ -892,14 +890,14 @@ int get_ssb_index_in_symbol(const PHY_VARS_NR_UE *ue, const int symbIdxInFrame, 
 /* Description: Generates PBCH LLRs from frequency domain signal for one OFDM symbol.
                 Generates PBCH time domain channel response.
    Returns    : SSB index if symbol contains SSB. Else returns -1. */
-int nr_process_pbch_symbol(
-    PHY_VARS_NR_UE *ue,
-    const UE_nr_rxtx_proc_t *proc,
-    const int symbol,
-    const int ssbIndexIn,
-    c16_t dl_ch_estimates_time[ue->frame_parms.nb_antennas_rx][ue->frame_parms.ofdm_symbol_size],
-    c16_t *dl_ch_estimates_symbol,
-    int16_t pbch_e_rx[NR_POLAR_PBCH_E])
+int nr_process_pbch_symbol(PHY_VARS_NR_UE *ue,
+                           const UE_nr_rxtx_proc_t *proc,
+                           const int symbol,
+                           const int ssbIndexIn,
+                           c16_t dl_ch_estimates_time[ue->frame_parms.nb_antennas_rx][ue->frame_parms.ofdm_symbol_size],
+                           c16_t *dl_ch_estimates_symbol,
+                           int16_t pbch_e_rx[NR_POLAR_PBCH_E],
+                           uint8_t *log2_maxh)
 {
   NR_DL_FRAME_PARMS *fp = &ue->frame_parms;
   const int symbIdxInFrame = symbol + NR_SYMBOLS_PER_SLOT * proc->nr_slot_rx;
@@ -956,7 +954,17 @@ int nr_process_pbch_symbol(
     memcpy(dl_ch_estimates_symbol, dl_ch_estimates[0], sizeof(*dl_ch_estimates_symbol) * NR_PBCH_NUM_RB * NR_NB_SC_PER_RB);
 
   const int symbIdxInSSB = relPbchSymb + 1;
-  nr_generate_pbch_llr(ue, proc, fp, symbIdxInSSB, ssbIndex, nid, ssb_start_subcarrier, rxdataF, dl_ch_estimates, pbch_e_rx);
+  nr_generate_pbch_llr(ue,
+                       proc,
+                       fp,
+                       symbIdxInSSB,
+                       ssbIndex,
+                       nid,
+                       ssb_start_subcarrier,
+                       rxdataF,
+                       dl_ch_estimates,
+                       pbch_e_rx,
+                       log2_maxh);
   // Do measurements on middle symbol of PBCH block
   if (relPbchSymb == 1) {
     nr_ue_ssb_rsrp_measurements(ue, ssbIndex, proc, rxdataF);
@@ -977,7 +985,8 @@ static int pbch_process(PHY_VARS_NR_UE *UE,
                         c16_t pbch_ch_est_sym1[NR_PBCH_NUM_RB * NR_NB_SC_PER_RB],
                         c16_t pbch_ch_est_time[UE->frame_parms.nb_antennas_rx][UE->frame_parms.ofdm_symbol_size],
                         int16_t pbch_e_rx[NR_POLAR_PBCH_E],
-                        int *pbchSymbCnt)
+                        int *pbchSymbCnt,
+                        uint8_t *log2_maxh)
 {
   int sampleShift = INT_MAX;
 
@@ -990,7 +999,7 @@ static int pbch_process(PHY_VARS_NR_UE *UE,
   else if (*pbchSymbCnt == 2)
     cur_pbch_est = pbch_ch_est_sym3;
 
-  *ssbIndex = nr_process_pbch_symbol(UE, proc, symbol, *ssbIndex, pbch_ch_est_time, cur_pbch_est, pbch_e_rx);
+  *ssbIndex = nr_process_pbch_symbol(UE, proc, symbol, *ssbIndex, pbch_ch_est_time, cur_pbch_est, pbch_e_rx, log2_maxh);
   // If valid PBCH symbol, increment symbol count.
   if (*ssbIndex > -1)
     (*pbchSymbCnt)++;
@@ -1057,10 +1066,11 @@ int pbch_processing(PHY_VARS_NR_UE *ue, const UE_nr_rxtx_proc_t *proc, nr_phy_da
     c16_t pbch_ch_est_sym1[NR_PBCH_NUM_RB * NR_NB_SC_PER_RB];
 
     int ssbIndex = -1;
+    uint8_t log2_maxh = 0;
     // TODO: Remove loopover symbols when symbol based receiver is fully integrated.
     for (int symbol = 0; symbol < fp->symbols_per_slot; symbol++) {
       const int pbch_sampleShift =
-          pbch_process(ue, proc, symbol, &ssbIndex, pbch_ch_est_sym1, pbch_ch_est_time, pbch_e_rx, &pbchSymbCnt);
+          pbch_process(ue, proc, symbol, &ssbIndex, pbch_ch_est_sym1, pbch_ch_est_time, pbch_e_rx, &pbchSymbCnt, &log2_maxh);
       // To prevent overwrite estimated shift by consecutive symbol calls
       sampleShift = (sampleShift == INT_MAX) ? pbch_sampleShift : sampleShift;
     }

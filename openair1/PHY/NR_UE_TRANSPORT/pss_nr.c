@@ -233,18 +233,18 @@ pss_detection_result_t pss_search_time_nr(const pss_search_t *p)
 #endif
   }
 
-  LOG_D(PHY,
-        "[UE] nr_synchro_time: Sync source (nid2) = %d, Peak found at pos %d, val = %ld (%d dB power over signal avg %d dB), ffo "
-        "%lf\n",
-        pss_source,
-        peak_position,
-        peak_value,
-        dB_fixed64(peak_value),
-        dB_fixed64(avg[pss_source]),
-        ffo_est);
-
   if (peak_value == 0 || peak_value < 5 * avg[pss_source])
     return (pss_detection_result_t){.success = false};
+
+  LOG_D(PHY,
+      "[UE] nr_synchro_time: Sync source (nid2) = %d, Peak found at pos %d, val = %ld (%d dB power over signal avg %d dB), ffo "
+      "%lf\n",
+      pss_source,
+      peak_position,
+      peak_value,
+      dB_fixed64(peak_value),
+      dB_fixed64(avg[pss_source]),
+      ffo_est);
 
 #ifdef DBG_PSS_NR
   static int debug_cnt = 0;

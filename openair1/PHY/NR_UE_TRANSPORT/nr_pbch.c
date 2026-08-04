@@ -192,25 +192,19 @@ void nr_pbch_channel_compensation(const struct complex16 rxdataF_ext[][PBCH_MAX_
   }
 }
 
-void nr_pbch_detection_mrc(NR_DL_FRAME_PARMS *frame_parms,
-                           int **rxdataF_comp,
-                           uint8_t symbol) {
-  uint8_t symbol_mod;
-  int i, nb_rb = 6;
-  simde__m128i *rxdataF_comp128_0, *rxdataF_comp128_1;
-  symbol_mod = (symbol>=(7-frame_parms->Ncp)) ? symbol-(7-frame_parms->Ncp) : symbol;
+static void nr_pbch_detection_mrc(struct complex16 rxdataF_comp[][PBCH_MAX_RE_PER_SYMBOL], uint8_t nb_antennas_rx, int nb_re)
+{
+  if (nb_antennas_rx == 1)
+    return;
 
-  if (frame_parms->nb_antennas_rx > 1) {
-    rxdataF_comp128_0 = (simde__m128i *)&rxdataF_comp[0][symbol_mod * 6 * 12];
-    rxdataF_comp128_1 = (simde__m128i *)&rxdataF_comp[1][symbol_mod * 6 * 12];
+  simde__m128i *rxdataF_comp128_0 = (simde__m128i *)rxdataF_comp[0];
 
-    // MRC on each re of rb, both on MF output and magnitude (for 16QAM/64QAM llr computation)
-    for (i = 0; i < nb_rb * 3; i++) {
-      rxdataF_comp128_0[i] =
-          simde_mm_adds_epi16(simde_mm_srai_epi16(rxdataF_comp128_0[i], 1), simde_mm_srai_epi16(rxdataF_comp128_1[i], 1));
+  for (int a = 1; a < nb_antennas_rx; a++) {
+    simde__m128i *rxdataF_comp128_a = (simde__m128i *)rxdataF_comp[a];
+    for (int i = 0; i < nb_re / 4; i++) {
+      rxdataF_comp128_0[i] = simde_mm_adds_epi16(rxdataF_comp128_0[i], rxdataF_comp128_a[i]);
     }
   }
-
 }
 
 void nr_pbch_unscrambling(int16_t *demod_pbch_e,
@@ -284,7 +278,8 @@ void nr_generate_pbch_llr(const PHY_VARS_NR_UE *ue,
                           const int ssb_start_subcarrier,
                           const c16_t rxdataF[frame_parms->nb_antennas_rx][frame_parms->ofdm_symbol_size],
                           const c16_t dl_ch_estimates[frame_parms->nb_antennas_rx][frame_parms->ofdm_symbol_size],
-                          int16_t pbch_e_rx[NR_POLAR_PBCH_E])
+                          int16_t pbch_e_rx[NR_POLAR_PBCH_E],
+                          uint8_t *log2_maxh)
 {
   const int symbol_offset = nr_get_ssb_start_symbol(frame_parms, i_ssb) % (NR_SYMBOLS_PER_SLOT);
   const int nb_re = (symbolSSB == 2) ? 72 : 180;
@@ -307,28 +302,24 @@ void nr_generate_pbch_llr(const PHY_VARS_NR_UE *ue,
   LOG_I(PHY, "[PHY] PBCH starting channel_level\n");
 #endif
 
-  double log2_maxh = 0;
-  uint32_t max_h = 0;
   if (symbolSSB == 1) {
     int avg[frame_parms->nb_antennas_rx];
     nr_channel_level(0, PBCH_MAX_RE_PER_SYMBOL, dl_ch_estimates_ext, frame_parms->nb_antennas_rx, 1, avg, nb_re);
-    max_h = avg[0];
+    uint32_t max_h = avg[0];
     for (int i = 1; i < frame_parms->nb_antennas_rx; i++)
       max_h = cmax(avg[i], max_h);
-    log2_maxh = 3 + (log2_approx(max_h) / 2);
-  }
+    *log2_maxh = 3 + (log2_approx(max_h) / 2);
 
 #ifdef DEBUG_PBCH
-  LOG_I(PHY, "[PHY] PBCH log2_maxh = %f (%d)\n", log2_maxh, max_h);
+    LOG_I(PHY, "[PHY] PBCH log2_maxh = %f (%d)\n", log2_maxh, max_h);
 #endif
+  }
+
   __attribute__((aligned(32))) struct complex16 rxdataF_comp[frame_parms->nb_antennas_rx][PBCH_MAX_RE_PER_SYMBOL];
   nr_pbch_channel_compensation(rxdataF_ext, dl_ch_estimates_ext, nb_re, rxdataF_comp, frame_parms,
-                               log2_maxh); // log2_maxh+I0_shift
+                               *log2_maxh); // log2_maxh+I0_shift
 
-  /*if (frame_parms->nb_antennas_rx > 1)
-    pbch_detection_mrc(frame_parms,
-                        rxdataF_comp,
-                        symbol);*/
+  nr_pbch_detection_mrc(rxdataF_comp, frame_parms->nb_antennas_rx, nb_re);
 
   /*
       if (mimo_mode == ALAMOUTI) {

@@ -2667,8 +2667,7 @@ int nr_get_csi_measurements(NR_UE_MAC_INST_t *mac,
                             frame_t frame,
                             int slot,
                             nfapi_nr_ue_csi_payload_t *csi_payload,
-                            NR_PUCCH_Resource_t **csi_pucch,
-                            bool csi_on_pusch)
+                            NR_PUCCH_Resource_t **csi_pucch)
 {
   NR_UE_UL_BWP_t *current_UL_BWP = mac->current_UL_BWP;
   NR_PUCCH_Config_t *pucch_Config = current_UL_BWP ? current_UL_BWP->pucch_Config : NULL;
@@ -2722,13 +2721,17 @@ int nr_get_csi_measurements(NR_UE_MAC_INST_t *mac,
         // we discard previous report
         csi_priority = temp_priority;
         num_csi = 1;
-        *csi_payload = nr_get_csi_payload(mac, csi_report_id, csi_on_pusch ? ON_PUSCH : WIDEBAND_ON_PUCCH, csi_measconfig);
+        // 38.214 section 5.2.3: "For both Type I and Type II reports configured for PUCCH but transmitted
+        // on PUSCH, the determination of the payload for CSI part 1 and CSI part 2 follows that of PUCCH
+        // as described in Clause 5.2.4." Hence WIDEBAND_ON_PUCCH is used here regardless of whether
+        // the CSI report is sent on PUCCH or PUSCH.
+        *csi_payload = nr_get_csi_payload(mac, csi_report_id, WIDEBAND_ON_PUCCH, csi_measconfig);
       } else
         continue;
     } else {
       num_csi = 1;
       csi_priority = temp_priority;
-      *csi_payload = nr_get_csi_payload(mac, csi_report_id, csi_on_pusch ? ON_PUSCH : WIDEBAND_ON_PUCCH, csi_measconfig);
+      *csi_payload = nr_get_csi_payload(mac, csi_report_id, WIDEBAND_ON_PUCCH, csi_measconfig);
     }
   }
   return num_csi;

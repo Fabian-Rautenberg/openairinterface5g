@@ -1,7 +1,7 @@
 clc; clear all;
 dir            = input('Enter the directory path to T tracer dumps: ');
 fft_size       = input('Enter the OFDM FFT size used for file parsing: ');
-num_resources  = input('Enter number of PRS respurces: ');
+num_resources  = input('Enter number of PRS resources: ');
 num_gnb        = input('Enter number of active gNBs: ');
 num_prs_symb   = 1;
 start_resource = 0;

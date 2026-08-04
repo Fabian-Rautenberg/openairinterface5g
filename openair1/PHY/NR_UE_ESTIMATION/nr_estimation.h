@@ -81,6 +81,7 @@ int nr_adjust_synch_ue(const NR_DL_FRAME_PARMS *frame_parms,
 void nr_ue_measurements(PHY_VARS_NR_UE *ue,
                         const UE_nr_rxtx_proc_t *proc,
                         int number_rbs,
+                        uint16_t l,
                         uint32_t pdsch_est_size,
                         int32_t dl_ch_estimates[][pdsch_est_size]);
 

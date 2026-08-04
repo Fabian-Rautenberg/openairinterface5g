@@ -1797,7 +1797,7 @@ static bool schedule_uci_on_pusch(NR_UE_MAC_INST_t *mac,
     nfapi_nr_ue_csi_payload_t csi_payload = {0};
     NR_PUSCH_Config_t *pusch_Config = mac->current_UL_BWP->pusch_Config;
     NR_PUCCH_Resource_t *csi_pucch = NULL;
-    nr_get_csi_measurements(mac, frame_tx, slot_tx, &csi_payload, &csi_pucch, true);
+    nr_get_csi_measurements(mac, frame_tx, slot_tx, &csi_payload, &csi_pucch);
     fill_pusch_uci_struct(pusch_Config, &csi_payload, pusch_pdu);
     mux_done = true;
   }
@@ -1837,7 +1837,7 @@ static void nr_ue_pucch_scheduler(NR_UE_MAC_INST_t *mac, frame_t frame, int slot
   // CSI
   int csi_res = 0;
   if (mac->state == UE_CONNECTED)
-    csi_res = nr_get_csi_measurements(mac, frame, slot, &pucch[num_res].csi_payload, &pucch[num_res].pucch_resource, false);
+    csi_res = nr_get_csi_measurements(mac, frame, slot, &pucch[num_res].csi_payload, &pucch[num_res].pucch_resource);
   if (csi_res > 0) {
     num_res += csi_res;
   }

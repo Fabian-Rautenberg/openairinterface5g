@@ -77,6 +77,7 @@ Legacy unmaintained files:
 - [Information on analog beamforming implementation](./analog_beamforming.md)
 - [Information on the UE 5G NAS implementation](./5Gnas.md)
 - [Information on UL-MIMO](./UL_MIMO.md): UL-MIMO specific notes
+- [Information on NRPPA](./NRPPA/NRPPA-call-flow.md)
 
 ## Building and running from images
 

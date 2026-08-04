@@ -126,11 +126,7 @@ int do_NR_RRCReconfigurationComplete_for_nsa(uint8_t *buffer, size_t buffer_size
 
 int do_NR_RRCReconfigurationComplete(uint8_t *buffer, size_t buffer_size, const uint8_t Transaction_id);
 
-int do_NR_DLInformationTransfer(uint8_t *buffer,
-                                size_t buffer_len,
-                                uint8_t transaction_id,
-                                uint32_t pdu_length,
-                                uint8_t *pdu_buffer);
+byte_array_t do_NR_DLInformationTransfer(uint8_t Transaction_id, uint32_t pdu_length, uint8_t *pdu_buffer);
 
 int do_NR_ULInformationTransfer(uint8_t **buffer,
                                 uint32_t pdu_length,

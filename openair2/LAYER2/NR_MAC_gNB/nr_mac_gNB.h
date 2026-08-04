@@ -22,6 +22,7 @@
 #include "common/utils/ds/byte_array.h"
 #include "common/utils/ds/spsc_q.h"
 #include "openair2/LAYER2/nr_rlc/nr_rlc_configuration.h"
+#include "openair2/LAYER2/NR_MAC_gNB/nr_pos_ue_context.h"
 
 #define NR_SCHED_LOCK(lock)                                        \
   do {                                                             \
@@ -790,6 +791,10 @@ typedef struct nr_mac_rrc_ul_if_s {
   ue_context_release_request_func_t ue_context_release_request;
   ue_context_release_complete_func_t ue_context_release_complete;
   initial_ul_rrc_message_transfer_func_t initial_ul_rrc_message_transfer;
+  trp_information_response_func_t trp_information_response;
+  positioning_information_response_func_t positioning_information_response;
+  positioning_activation_response_func_t positioning_activation_response;
+  positioning_measurement_response_func_t positioning_measurement_response;
 } nr_mac_rrc_ul_if_t;
 
 typedef struct measgap_config {
@@ -1187,7 +1192,12 @@ typedef struct NR_du_stats {
   uint32_t ss_rsrp_ssb_dist[NR_KPM_NB_SSB][NR_KPM_SS_RSRP_NB_LEVELS];
 } NR_du_stats_t;
 
-/*! \brief top level eNB MAC structure */
+typedef struct {
+  bool active;
+  f1ap_positioning_measurement_req_t meas_req;
+} positioning_measurement_info_t;
+
+/*! \brief top level gNB MAC structure */
 typedef struct gNB_MAC_INST_s {
   /// F1-C/U network configuration (addresses and ports)
   f1ap_net_config_t net_config;
@@ -1311,6 +1321,8 @@ typedef struct gNB_MAC_INST_s {
 
   NR_du_stats_t du_stats;
 
+  seq_arr_t pos_act_ue_arr;
+  positioning_measurement_info_t pos_meas_info;
 } gNB_MAC_INST;
 
 #endif /*__LAYER2_NR_MAC_GNB_H__ */
